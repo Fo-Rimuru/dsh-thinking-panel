@@ -1,0 +1,5 @@
+# 对照实验用：把插件切到 off（不注入任何语言规则）
+- id: thinking-panel
+  name: 'dsh-thinking-panel'
+  config:
+    mode: off

@@ -1,0 +1,27 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 仓库里不含 DSH 出厂源码（那不属于本项目），所以第 [3] 节的 18 项
+      # 「规格交叉比对」会自动记为 SKIP —— 既不算通过也不算失败，退出码仍为 0。
+      # 想跑满全部断言的话，本地设 DSH_SRC_DIR / DSH_SLOT_CATALOG 即可。
+      - name: 契约自检（Host 半部 + Client 半部 + 组件树渲染）
+        run: node tools/verify.mjs
+
+      # 自更新涉及文件写入，单独一套单元测试：不联网、全在临时目录里跑。
+      - name: 自更新模块单元测试
+        run: node tools/test-self-update.mjs

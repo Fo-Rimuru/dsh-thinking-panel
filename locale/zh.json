@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-thinking-panel[深度思考面板]",
+    "description": "让思考内容跟随用户输入语言；并以自绘的 assistant-step 渲染器对齐官方 DeepSeek 思考面板（思考中多行滚动预览、展开看完整推理、左侧竖线、「已思考（用时 X 秒）」标题）。"
+  }
+}

@@ -1,0 +1,41 @@
+# A/B 对照实验用：把默认模型指向一个第三方 provider，复现实验时不消耗官方额度。
+#
+#   & $dsh headless --patch tools\ab-provider-opencode-go.yml "用中文问一个需要多步推理的问题…"
+#   & $dsh headless --patch tools\ab-provider-opencode-go.yml --patch tools\ab-mode-off.yml "同一提示词"
+#
+# 需要先提供环境变量 OPENCODE_GO_API_KEY。
+# 这只是一个**示例 provider** —— 换成任何你已有的 provider 都能复现同一组对照；
+# README 里的 A/B 表用的就是下面这个 deepseek-v4.1-flash。
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: opencode-go
+    model: deepseek-v4.1-flash
+    reasoningEffort: max
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      opencode-go:
+        displayName: OpenCode Go
+        apiKeyEnv: OPENCODE_GO_API_KEY
+        api: openai-completions
+        baseURL: https://opencode.ai/zen/go/v1
+        models:
+          - id: deepseek-v4.1-flash
+            name: DeepSeek V4.1 Flash
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              low: low
+              high: high
+              max: max
+            compat:
+              supportsStore: false
+              supportsDeveloperRole: false
+              maxTokensField: max_tokens
+              requiresReasoningContentOnAssistantMessages: true
+              thinkingFormat: deepseek

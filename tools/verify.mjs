@@ -1,0 +1,706 @@
+/**
+ * 原型自检：不安装插件即可验证两半部的正确性。
+ *
+ *  1. Host 半部：ESM 导入 → mock ctx 调用 apply → 校验注册的 PromptSection 合法。
+ *  2. Client 半部：VM 沙箱执行 client.js → 取 factory → mock React/ctx → 校验
+ *     locale 注册、三个 slot 注册，并**真实渲染 assistant-step 组件树**断言：
+ *       · reasoning 块渲染成思考面板（dst-think / 标题 / 图标）
+ *       · text 块渲染成 Markdown
+ *       · groupPart 过滤规则与出厂 AssistantMarkdown 一致
+ *       · tool-call 块被跳过（它是独立节点）
+ *       · 图片块走 renderMessageImages 且连续图片合并成一组
+ *       · ui-primitives 取不到时降级为纯文本，不抛错
+ *  3. 规格交叉比对：把组件里实现的规则回查出厂源码，确认不是臆造。
+ *
+ * 用法： node tools/verify.mjs
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const pkgDir = path.resolve(here, '..');
+
+/**
+ * DSH 出厂源码目录 —— **可选**。
+ *
+ * 第 [3] 节的「规格交叉比对」需要一份 DSH 解包源码副本，用来确认组件里实现的规则
+ * 是逐条对应出厂实现、而不是臆造。该源码不属于本项目，仓库里不包含它，
+ * 因此未提供时这些断言记为 **SKIP**：既不算通过，也不算失败。
+ *
+ *   DSH_SRC_DIR=<含 ui-chat-client.js / ui-theme-client.js 的目录> node tools/verify.mjs
+ *   或  node tools/verify.mjs <该目录>
+ *
+ * 另有 3 项依赖槽目录导出（`Slots.listSubTree` 的文本结果），用
+ * `DSH_SLOT_CATALOG=<文件路径>` 提供；未提供时同样 SKIP。
+ */
+const srcDir = (process.env.DSH_SRC_DIR ?? process.argv[2] ?? '').trim();
+const catalogPath = (process.env.DSH_SLOT_CATALOG ?? '').trim();
+const haveSrc = srcDir !== '' && fs.existsSync(srcDir);
+const haveCatalog = catalogPath !== '' && fs.existsSync(catalogPath);
+
+let pass = 0;
+let fail = 0;
+let skipped = 0;
+const failures = [];
+const skips = [];
+
+function check(name, ok, detail) {
+  if (ok) { pass++; console.log(`  PASS  ${name}`); }
+  else { fail++; failures.push(name); console.log(`  FAIL  ${name}${detail ? ` — ${detail}` : ''}`); }
+}
+
+/** 材料缺失（不是断言不成立）时记 SKIP，避免在别人的机器上制造假失败。 */
+function skip(name, reason) {
+  skipped++;
+  skips.push(name);
+  console.log(`  SKIP  ${name}${reason ? ` — ${reason}` : ''}`);
+}
+
+/* ================================================================== *
+ * 1. Host half
+ * ================================================================== */
+console.log('\n[1] Host 半部 (index.js)');
+const host = await import(path.join(pkgDir, 'index.js').replace(/\\/g, '/').replace(/^/, 'file:///'));
+
+check('导出 apply 函数', typeof host.apply === 'function');
+check('inject 含 systemPrompt', Array.isArray(host.inject) && host.inject.includes('systemPrompt'));
+check('SECTION_ORDER 是有限数', Number.isFinite(host.SECTION_ORDER));
+check('SECTION_ORDER 排在系统提示词最末（> DEPLOYMENT_PERSONA_SUFFIX 10200）',
+  host.SECTION_ORDER > 10200, `order=${host.SECTION_ORDER}`);
+check('CONTEXT_ORDER 排在既有上下文之后（> SUBAGENT_DELEGATION 120）',
+  host.CONTEXT_ORDER > 120, `order=${host.CONTEXT_ORDER}`);
+
+const sections = [];
+const contexts = [];
+const effects = [];
+const mockHostCtx = {
+  effect(fn, label) { effects.push({ fn, label }); return fn(); },
+  systemPrompt: {
+    section(section) { sections.push(section); return () => {}; },
+    context(context) { contexts.push(context); return () => {}; },
+  },
+};
+
+host.apply(mockHostCtx, { mode: 'auto' });
+
+check('apply 通过 ctx.effect 注册资源', effects.length === 2, `effects=${effects.length}`);
+check('每个 ctx.effect 都带诊断 label',
+  effects.every((e) => typeof e.label === 'string' && e.label.length > 0));
+check('注册了恰好 1 个 PromptSection', sections.length === 1, `got ${sections.length}`);
+check('注册了恰好 1 个运行时上下文', contexts.length === 1, `got ${contexts.length}`);
+
+const sec = sections[0] ?? {};
+check('PromptSection.name 为非空字符串', typeof sec.name === 'string' && sec.name.length > 0);
+check('PromptSection.order 有限（非有限值会 throw）', Number.isFinite(sec.order));
+check('PromptSection.text 为非空字符串', typeof sec.text === 'string' && sec.text.length > 20);
+check('规则文本要求「与用户最近一条消息相同的语言」', /相同的语言/.test(sec.text ?? ''));
+check('规则文本声明只约束思考过程', /只约束思考过程/.test(sec.text ?? ''));
+check('SECTION_NAME 与 PromptSection.name 一致', sec.name === host.SECTION_NAME);
+check('SECTION_NAME 与 CONTEXT_NAME 不同（两个注册表）', host.SECTION_NAME !== host.CONTEXT_NAME);
+
+const ctx0 = contexts[0] ?? {};
+check('PromptContext.name 正确', ctx0.name === host.CONTEXT_NAME);
+check('PromptContext.order 有限', Number.isFinite(ctx0.order));
+check('运行时上下文要求「立即生效」', /立即生效/.test(String(ctx0.text ?? '')));
+check('运行时上下文比段落更短（更贴近生成点）',
+  String(ctx0.text ?? '').length < String(sec.text ?? '').length);
+
+for (const [mode, expectNull, needle] of [
+  ['auto', false, '相同的语言'],
+  ['zh', false, '全部使用中文书写'],
+  ['en', false, 'entirely in English'],
+  ['off', true, null],
+]) {
+  const s = [];
+  const c = [];
+  const ctx = {
+    effect: (fn) => fn(),
+    systemPrompt: { section: (x) => { s.push(x); return () => {}; }, context: (x) => { c.push(x); return () => {}; } },
+  };
+  host.apply(ctx, { mode });
+  if (expectNull) {
+    check(`mode=${mode} 不注册段落`, s.length === 0, `got ${s.length}`);
+    check(`mode=${mode} 不注册上下文`, c.length === 0, `got ${c.length}`);
+  } else {
+    check(`mode=${mode} 注册段落且文本命中关键词`, s.length === 1 && s[0].text.includes(needle));
+    check(`mode=${mode} 注册上下文`, c.length === 1, `got ${c.length}`);
+  }
+}
+
+{
+  const s = [];
+  const c = [];
+  const ctx = {
+    effect: (fn) => fn(),
+    systemPrompt: { section: (x) => { s.push(x); return () => {}; }, context: (x) => { c.push(x); return () => {}; } },
+  };
+  host.apply(ctx, { mode: 'bogus' });
+  check('未知 mode 回落到 auto', s.length === 1 && s[0].text === host.reasoningLanguageRule('auto'));
+}
+
+/* ================================================================== *
+ * 2. Client half
+ * ================================================================== */
+console.log('\n[2] Client 半部 (client.js)');
+
+const clientSrc = fs.readFileSync(path.join(pkgDir, 'client.js'), 'utf8');
+const loaded = [];
+const sandbox = {
+  window: {
+    __ModuleLoader__: { load: (m) => loaded.push(m) },
+    localStorage: {
+      _v: {},
+      getItem(k) { return this._v[k] ?? null; },
+      setItem(k, v) { this._v[k] = String(v); },
+    },
+  },
+  console,
+  document: { baseURI: 'http://localhost/' },
+  requestAnimationFrame: (fn) => { rafQueue.push(fn); return rafQueue.length; },
+};
+vm.createContext(sandbox);
+vm.runInContext(clientSrc, sandbox, { filename: 'client.js' });
+
+check('模块加载时恰好注册 1 个 factory', loaded.length === 1, `got ${loaded.length}`);
+const mod = loaded[0] ?? {};
+check('模块 id 等于包名', mod.id === 'dsh-thinking-panel', String(mod.id));
+check('factory 是函数', typeof mod.factory === 'function');
+
+/* --- minimal React stub ------------------------------------------------ */
+/** 假的滚动元素：用于验证「跟随最新内容」的滚动逻辑。默认是一个溢出的滚动盒。 */
+function makeFakeElement(init = {}) {
+  return {
+    scrollTop: 0,
+    scrollHeight: init.scrollHeight ?? 1000,
+    clientHeight: init.clientHeight ?? 100,
+    attrs: {},
+    listeners: {},
+    ownerDocument: { activeElement: null },
+    setAttribute(k, v) { this.attrs[k] = v; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    addEventListener(k, fn) { (this.listeners[k] ||= []).push(fn); },
+    removeEventListener(k, fn) { this.listeners[k] = (this.listeners[k] || []).filter((f) => f !== fn); },
+    contains() { return false; },
+  };
+}
+/** 可控的 requestAnimationFrame：手动 flush，模拟「scroll 事件先于下一帧」的时序。 */
+const rafQueue = [];
+const flushRaf = () => { const q = rafQueue.splice(0); for (const fn of q) fn(); };
+
+class ReactComponent {
+  constructor(props) { this.props = props ?? {}; this.state = {}; }
+  setState(next) { this.state = { ...this.state, ...next }; }
+}
+const React = {
+  Component: ReactComponent,
+  createElement(type, props, ...children) {
+    const kids = children.flat().filter((c) => c !== undefined && c !== null);
+    // React 语义：children 同时出现在 props.children（类组件依赖它）
+    return { type, props: { ...(props ?? {}), children: kids.length === 1 ? kids[0] : kids }, children: kids };
+  },
+  Fragment: '@fragment',
+  useReducer(_r, init) { return [init, () => {}]; },
+  useState(init) { return [init, () => {}]; },
+  useEffect(fn) { return fn(); },
+  useMemo(fn) { return fn(); },
+  useCallback(fn) { return fn; },
+  // null 初始化的 ref 给一个假 DOM 元素；其余（true/false）原样返回
+  useRef(init) { return { current: init === null ? makeFakeElement() : init }; },
+};
+const primitives = {
+  MarkdownText: function MarkdownText(p) { return React.createElement('markdown', p); },
+  JsonBlock: function JsonBlock(p) { return React.createElement('json', p); },
+  IconThinkOutlineRegular: function IconThinkOutlineRegular(p) { return React.createElement('think-icon', p); },
+  Switch: function Switch(p) { return React.createElement('switch', p); },
+};
+let primitivesAvailable = true;
+const requireStub = (name) => {
+  if (name === 'react') return React;
+  if (name === '@deepseek-ai/dsh-client-ui-primitives') {
+    if (!primitivesAvailable) throw new Error('not available');
+    return primitives;
+  }
+  throw new Error(`unexpected require('${name}')`);
+};
+
+const client = mod.factory(requireStub);
+check('factory 返回 inject 列表', Array.isArray(client.inject));
+check('inject 含 slots 与 locale', client.inject.includes('slots') && client.inject.includes('locale'));
+
+/* --- mock ctx --------------------------------------------------------- */
+const localeRegs = [];
+const slotInjects = [];
+const slotRegs = [];
+const clientEffects = [];
+const dictsFor = (ns) => localeRegs.find((r) => r.ns === ns)?.dicts?.zh;
+const t = (key, params) => {
+  let s = dictsFor('thinking-panel')?.[key] ?? key;
+  if (params) s = s.replace(/\{(\w+)\}/g, (m, n) => (n in params ? String(params[n]) : m));
+  return s;
+};
+const mockClientCtx = {
+  effect(fn, label) { clientEffects.push(label); return fn(); },
+  locale: {
+    register(ns, dicts) { localeRegs.push({ ns, dicts }); return () => {}; },
+    bind() { return t; },
+  },
+  slots: {
+    inject(key, cb) { slotInjects.push(key); return cb(); },
+    register(options, component) { slotRegs.push({ options, component }); return () => {}; },
+  },
+};
+
+client.apply(mockClientCtx);
+
+check('注册了 locale 字典（新命名空间）', localeRegs.length === 1 && localeRegs[0].ns === 'thinking-panel');
+check('字典含 zh 与 en 两套', !!localeRegs[0]?.dicts?.zh && !!localeRegs[0]?.dicts?.en);
+check('locale 注册走 ctx.effect', clientEffects.some((l) => String(l).includes('dictionaries')));
+
+check('slots.inject 了 shell.overlay', slotInjects.includes('shell.overlay'));
+check('slots.inject 了 settings.general.item', slotInjects.includes('settings.general.item'));
+check('slots.inject 了 conversation.chat.node', slotInjects.includes('conversation.chat.node'));
+check('恰好注册 3 个 slot 条目', slotRegs.length === 3, `got ${slotRegs.length}`);
+
+const styleReg = slotRegs.find((r) => r.options.name === 'shell.overlay');
+const settingsReg = slotRegs.find((r) => r.options.name === 'settings.general.item');
+const nodeReg = slotRegs.find((r) => r.options.name === 'conversation.chat.node');
+check('shell.overlay 条目 id 正确', styleReg?.options.id === 'thinking-panel-style');
+check('settings.general.item 条目 id 正确', settingsReg?.options.id === 'thinking-panel-settings');
+check('conversation.chat.node 条目 key = assistant-step', nodeReg?.options.key === 'assistant-step');
+check('conversation.chat.node 条目用更低优先级遮蔽（运行时要求 lowest renders）',
+  nodeReg?.options.priority === -1, `priority=${nodeReg?.options.priority}`);
+check('注册失败时不抛出（出厂渲染器保持可用）',
+  /try \{[\s\S]{0,200}ctx\.slots\.register\(\{[\s\S]{0,300}\} catch \(error\)/.test(clientSrc));
+check('三个条目组件都是函数',
+  typeof styleReg?.component === 'function'
+  && typeof settingsReg?.component === 'function'
+  && typeof nodeReg?.component === 'function');
+
+/* --- 渲染 <style> ------------------------------------------------------ */
+const styleEl = styleReg.component();
+check('StyleSeat 渲染出 <style> 元素', styleEl?.type === 'style');
+check('style 带 data-plugin 标记', styleEl?.props?.['data-plugin'] === 'dsh-thinking-panel');
+const css = typeof styleEl?.children?.[0] === 'string' ? styleEl.children[0] : String(styleEl?.children ?? '');
+check('CSS 非空', css.length > 300, `${css.length} chars`);
+
+for (const [label, needle] of [
+  ['自有命名空间 dst-think', '.dst-think{'],
+  ['左侧竖线', 'border-left:1px solid var(--dsw-alias-label-dimmed)'],
+  ['竖线定位 left:7.5px', 'left:7.5px'],
+  ['官方容器内边距', 'padding:5px 0 5px 22px'],
+  ['图标品牌色', 'color:var(--dsw-alias-brand-primary)'],
+  ['标题常态色', 'color:var(--dsw-alias-label-secondary)'],
+  ['标题悬停色', 'color:var(--dsw-alias-label-primary)'],
+  ['正文官方字体令牌', 'font:var(--dsw-font-markdown-small)'],
+  ['预览高度上限 5×行高+10dp', 'max-height:calc(110px + var(--dsh-content-font-delta-secondary,0px) * 5)'],
+  ['预览可滚动', 'overflow-y:auto'],
+  ['滚动淡出遮罩', 'mask-image:linear-gradient(180deg'],
+  ['折叠推理块间距（出厂同构）', '[data-turn-process-inline][hidden]{margin-bottom:-16px}'],
+  ['展开态有高度上限', 'max-height:min(60vh, 640px)'],
+  ['展开态可内部滚动', '.dst-think-body{margin-top:4px;color:var(--dsw-alias-label-secondary);'],
+  ['展开态显式绘制滚动条', '.dst-think-body::-webkit-scrollbar{width:8px'],
+  ['滚动条滑块可拖动样式', '.dst-think-body::-webkit-scrollbar-thumb'],
+]) {
+  check(`CSS 含${label}`, css.includes(needle), needle);
+}
+check('CSS 不再针对出厂类名做覆盖',
+  !/\[class\*="_/.test(css) && !/_thinkBody|_summaryText|_3GBCTG/.test(css));
+
+/* --- 错误边界（源码级断言：槽条目失败模式是整行空白，必须有兜底） --- */
+check('存在错误边界类组件', /class ThinkingBoundary extends React\.Component/.test(clientSrc));
+check('错误边界实现 getDerivedStateFromError', /static getDerivedStateFromError\(\)/.test(clientSrc));
+check('错误边界实现 componentDidCatch 记录日志', /componentDidCatch\(error\)/.test(clientSrc));
+check('assistant-step 输出被错误边界包裹', /h\(ThinkingBoundary, \{ blocks \}/.test(clientSrc));
+check('存在不依赖任何客户端包的纯文本兜底', /function plainFallback\(blocks\)/.test(clientSrc));
+
+/* --- 出厂 DOM 契约：折叠推理块必须保留可查找性 --- */
+check('复刻 useSearchableHidden', /function useSearchableHidden\(hidden, reveal\)/.test(clientSrc));
+check('折叠态使用 hidden="until-found"（保留页内查找）', /setAttribute\('hidden', 'until-found'\)/.test(clientSrc));
+check('监听 beforematch 以支持页内查找揭示', /addEventListener\('beforematch'/.test(clientSrc));
+check('推理块外层带 data-turn-process-inline 锚点', /'data-turn-process-inline': hidden \|\| undefined/.test(clientSrc));
+
+/* --- 出厂 Markdown 装饰契约：labels 形状不完整会在渲染代码块时抛错 --- */
+check('复刻 markdownLabels 工厂', /function markdownLabels\(tr\)/.test(clientSrc));
+check('labels 含 code.toolbarLabels 完整形状',
+  /codeLabel: tr\('md\.codeBlock\.title'\)/.test(clientSrc)
+  && /wrapLabel: tr\('md\.codeBlock\.wrap'\)/.test(clientSrc)
+  && /unwrapLabel: tr\('md\.codeBlock\.unwrap'\)/.test(clientSrc));
+check('labels 含 footnotes', /footnotes: tr\('md\.footnotes'\)/.test(clientSrc));
+check('每处 MarkdownText 都传 labels',
+  (clientSrc.match(/MarkdownText, \{[^}]*\}/g) || []).every((m) => m.includes('labels'))
+  && (clientSrc.match(/MarkdownText, \{/g) || []).length === 2,
+  `MarkdownText 用法数=${(clientSrc.match(/MarkdownText, \{/g) || []).length}`);
+
+/* --- 递归渲染助手 ------------------------------------------------------ */
+function render(node, depth = 0) {
+  if (depth > 30 || node === null || node === undefined) return node;
+  if (Array.isArray(node)) return node.map((n) => render(n, depth + 1));
+  if (typeof node === 'function') return render(node(), depth + 1);
+  if (typeof node === 'object' && typeof node.type === 'function') {
+    const T = node.type;
+    // 类组件（错误边界）用 new 实例化后调 render()
+    if (T.prototype && typeof T.prototype.render === 'function') {
+      const inst = new T(node.props);
+      inst.state = inst.state ?? {};
+      return render(inst.render(), depth + 1);
+    }
+    return render(T(node.props), depth + 1);
+  }
+  if (typeof node === 'object' && node.children) {
+    return { ...node, children: node.children.map((c) => render(c, depth + 1)) };
+  }
+  return node;
+}
+const flatten = (n, out = []) => {
+  if (n === null || n === undefined) return out;
+  if (Array.isArray(n)) { n.forEach((x) => flatten(x, out)); return out; }
+  if (typeof n === 'object') {
+    out.push(n);
+    if (n.children) flatten(n.children, out);
+  }
+  return out;
+};
+
+const imageCalls = [];
+const baseProps = (over = {}) => ({
+  node: {
+    key: 'assistant-step:1:1',
+    data: {
+      status: 'running', turn: 1, step: 1,
+      blocks: [
+        { kind: 'reasoning', text: '第一步：确认官方实现。\n第二步：评估可行性。' },
+        { kind: 'text', text: '这是最终回答。' },
+      ],
+    },
+    location: { kind: 'step', turn: { status: 'open' } },
+  },
+  groupPart: undefined,
+  renderMessageImages: (owner) => { imageCalls.push(owner); return React.createElement('images', owner); },
+  fileMentions: () => undefined,
+  turnProcess: undefined,
+  useDisclosure: () => ({ expanded: false, toggle: () => {} }),
+  t,
+  ...over,
+});
+
+// (a) 思考中（reasoning 是最后一块 = 流式尾部）→ 面板处于 running
+{
+  const tree = render(React.createElement(nodeReg.component, baseProps({
+    node: {
+      key: 'assistant-step:1:1',
+      data: { status: 'running', turn: 1, step: 1, blocks: [{ kind: 'reasoning', text: '第一步：确认官方实现。' }] },
+      location: { kind: 'step', turn: { status: 'open' } },
+    },
+  })));
+  const nodes = flatten(tree);
+  check('默认渲染出思考面板', nodes.some((n) => n.props?.className === 'dst-think'));
+  const head = nodes.find((n) => n.props?.className === 'dst-think-head');
+  check('思考面板含标题行', !!head);
+  check('标题行含思考图标', nodes.some((n) => n.type === 'think-icon'));
+  check('思考中标题为「深度思考中」', JSON.stringify(head?.children ?? '').includes('深度思考中'));
+  check('思考面板带 data-state="running"', nodes.some((n) => n.props?.['data-state'] === 'running'));
+  check('折叠态带 data-collapsed（可展开）', nodes.some((n) => n.props?.['data-collapsed'] === true));
+  check('折叠态渲染预览容器', nodes.some((n) => n.props?.className === 'dst-think-preview'));
+  check('预览容器渲染完整推理文本', JSON.stringify(nodes.find((n) => n.props?.className === 'dst-think-preview')?.children ?? '').includes('确认官方实现'));
+}
+
+// (a2) reasoning 之后已有正文 → reasoning 不再是流式尾部，标题转为「已思考」
+{
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps())));
+  check('默认用例同时渲染思考与正文',
+    nodes.some((n) => n.props?.className === 'dst-think') && nodes.some((n) => n.type === 'markdown'));
+  const head = nodes.find((n) => n.props?.className === 'dst-think-head');
+  check('reasoning 非尾部时不再显示「深度思考中」', !JSON.stringify(head?.children ?? '').includes('深度思考中'));
+}
+
+// (b) groupPart = 'reasoning'：只留 reasoning
+{
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps({ groupPart: 'reasoning' }))));
+  check('groupPart=reasoning 保留思考面板', nodes.some((n) => n.props?.className === 'dst-think'));
+  const texts = nodes.filter((n) => n.type === 'markdown').map((n) => n.props?.text);
+  check('groupPart=reasoning 过滤掉正文块',
+    !texts.some((x) => typeof x === 'string' && x.includes('这是最终回答')), JSON.stringify(texts));
+}
+
+// (c) groupPart = 'response'：跳过 reasoning
+{
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps({ groupPart: 'response' }))));
+  check('groupPart=response 跳过思考面板', !nodes.some((n) => n.props?.className === 'dst-think'));
+  check('groupPart=response 保留正文', nodes.some((n) => n.type === 'markdown'));
+}
+
+// (d) tool-call 跳过；连续图片合并
+{
+  imageCalls.length = 0;
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps({
+    node: {
+      key: 'k2',
+      data: {
+        status: 'ok', turn: 2, step: 1,
+        blocks: [
+          { kind: 'tool-call', callId: 'c1' },
+          { kind: 'image', attachment: { id: 'a' } },
+          { kind: 'image', attachment: { id: 'b' } },
+          { kind: 'text', text: 'done' },
+        ],
+      },
+      location: { kind: 'step', turn: { status: 'open' } },
+    },
+  }))));
+  check('tool-call 块不在本节点渲染', !JSON.stringify(nodes).includes('c1'));
+  check('图片块调用 renderMessageImages', imageCalls.length === 1, `calls=${imageCalls.length}`);
+  check('连续图片合并为一组（2 张）', imageCalls[0]?.images?.length === 2, JSON.stringify(imageCalls[0]?.images));
+  check('图片组 align=start', imageCalls[0]?.align === 'start');
+}
+
+// (e) 思考结束：标题变「已思考」
+{
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps({
+    node: {
+      key: 'k3',
+      data: { status: 'ok', turn: 3, step: 1, blocks: [{ kind: 'reasoning', text: '推理内容' }] },
+      location: { kind: 'step', turn: { status: 'open' } },
+    },
+  }))));
+  const head = nodes.find((n) => n.props?.className === 'dst-think-head');
+  check('思考结束标题为「已思考」', JSON.stringify(head?.children ?? '').includes('已思考'));
+  check('思考结束 data-state="ok"', nodes.some((n) => n.props?.['data-state'] === 'ok'));
+}
+
+// (f) 展开态
+{
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps({
+    useDisclosure: () => ({ expanded: true, toggle: () => {} }),
+  }))));
+  const body = nodes.find((n) => n.props?.className === 'dst-think-body');
+  check('展开态渲染 dst-think-body', !!body);
+  check('展开态不渲染预览容器', !nodes.some((n) => n.props?.className === 'dst-think-preview'));
+  // 回归：展开态早先既没挂 scrollRef、effect 里又 `|| expanded` 提前返回，
+  // 导致流式推理展开后停在中途、用户得手动往下拖（用户实测反馈）。
+  check('展开态滚动容器挂了滚动 ref',
+    !!body?.props?.ref?.current && typeof body.props.ref.current.scrollTop === 'number');
+  check('展开态注册了 onScroll', typeof body?.props?.onScroll === 'function');
+  check('展开态也自动滚到底部（跟随最新内容）',
+    body?.props?.ref?.current?.scrollTop === body?.props?.ref?.current?.scrollHeight,
+    `scrollTop=${body?.props?.ref?.current?.scrollTop}`);
+}
+
+// (g) 空 blocks → null
+{
+  const tree = render(React.createElement(nodeReg.component, baseProps({
+    node: { key: 'k4', data: { status: 'ok', turn: 4, step: 1, blocks: [] }, location: { kind: 'step', turn: { status: 'open' } } },
+  })));
+  check('空 blocks 返回 null', tree === null || tree === undefined);
+}
+
+// (g2) MarkdownText 必须拿到完整的 labels（缺 code.toolbarLabels 会抛错）
+{
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps({
+    node: {
+      key: 'k5',
+      data: { status: 'ok', turn: 5, step: 1, blocks: [{ kind: 'text', text: '```js\nconst a = 1;\n```' }] },
+      location: { kind: 'step', turn: { status: 'open' } },
+    },
+  }))));
+  const md = nodes.filter((n) => n.type === 'markdown');
+  check('正文 Markdown 收到 labels', md.length === 1 && !!md[0].props?.labels);
+  check('labels.code.toolbarLabels 完整',
+    !!md[0]?.props?.labels?.code?.toolbarLabels?.codeLabel
+    && !!md[0]?.props?.labels?.code?.toolbarLabels?.wrapLabel
+    && !!md[0]?.props?.labels?.code?.toolbarLabels?.unwrapLabel);
+  check('labels.code.copyLabel / copiedLabel 存在',
+    !!md[0]?.props?.labels?.code?.copyLabel && !!md[0]?.props?.labels?.code?.copiedLabel);
+  check('labels.footnotes 存在', 'footnotes' in (md[0]?.props?.labels ?? {}));
+
+  const think = nodes.filter((n) => n.type === 'markdown' && n.props?.variant === 'compact');
+  check('思考面板 Markdown 也收到 labels', think.length === 0 || !!think[0].props?.labels);
+}
+
+// (i) 思考中预览必须自动跟随最新内容（回归：程序化滚动曾被误判为用户拖动）
+{
+  const nodes = flatten(render(React.createElement(nodeReg.component, baseProps({
+    node: {
+      key: 'k6',
+      data: { status: 'running', turn: 6, step: 1, blocks: [{ kind: 'reasoning', text: '很长的推理内容'.repeat(200) }] },
+      location: { kind: 'step', turn: { status: 'open' } },
+    },
+  }))));
+  const preview = nodes.find((n) => n.props?.className === 'dst-think-preview');
+  check('运行中渲染出预览容器', !!preview);
+  const el = preview?.props?.ref?.current;
+  check('预览容器挂了滚动 ref', !!el && typeof el.scrollTop === 'number');
+  check('运行中自动滚到底部（跟随最新内容）',
+    el && el.scrollTop === el.scrollHeight, `scrollTop=${el?.scrollTop} scrollHeight=${el?.scrollHeight}`);
+  check('预览容器注册了 onScroll', typeof preview?.props?.onScroll === 'function');
+  // 模拟「程序化滚动自己派发的 scroll 事件」：必须被忽略，不得关闭跟随
+  const before = el.scrollTop;
+  preview.props.onScroll();
+  check('程序化滚动事件不改变滚动位置', el.scrollTop === before);
+  flushRaf();
+  // 模拟用户往上拖：距底部很远 → 暂停跟随（stick=false，本渲染周期内不可直接观测，
+  // 由下面的静态断言保证逻辑接线正确）
+  el.scrollTop = 200;
+  preview.props.onScroll();
+  check('用户拖动后不再强制回底（单次渲染内无可观测副作用）', el.scrollTop === 200);
+}
+
+// (j) 静态回归：滚动跟随的实现细节
+{
+  check('区分程序化滚动与用户滚动', /if \(programmatic\.current\) return;/.test(clientSrc));
+  check('程序化滚动标记用 rAF 清除（scroll 事件先于下一帧）',
+    /requestAnimationFrame\(clear\)/.test(clientSrc));
+  check('已移除会误判的 userScrolled 标记', !/userScrolled/.test(clientSrc));
+  check('距底部 24px 内视为跟随中', /clientHeight < 24/.test(clientSrc));
+  check('跟随 effect 不再跳过展开态（回归：曾写成 `|| expanded`）',
+    !/if \(el === null \|\| expanded\) return;/.test(clientSrc));
+  check('展开态与折叠态共用同一个滚动 ref', /ref: scrollRef,          \/\/ ★ 与折叠态共用/.test(clientSrc));
+}
+
+// (j2) 静态回归：耗时记账不会无限增长 / key 不会退化
+{
+  check('耗时记账表有上限（防长时间运行缓慢泄漏）', /const TIMINGS_MAX = \d+;/.test(clientSrc));
+  check('超限时按插入顺序淘汰最早的条目',
+    /if \(timings\.size >= TIMINGS_MAX\)/.test(clientSrc) && /for \(const old of timings\.keys\(\)\)/.test(clientSrc));
+  check('noteRunning 对已存在的 key 幂等（严格模式双调用安全）',
+    /if \(rec !== undefined && rec\.start !== undefined\) return;/.test(clientSrc));
+  check('key 不会退化成 "undefined:undefined"',
+    /'unknown-step'/.test(clientSrc) && !/\|\| `\$\{data\.turn\}:\$\{data\.step\}`;/.test(clientSrc));
+}
+
+// (h) ui-primitives 不可用 → 纯文本降级
+{
+  primitivesAvailable = false;
+  const mod2 = mod.factory(requireStub);
+  const regs2 = [];
+  const ctx2 = {
+    effect: (fn) => fn(),
+    locale: mockClientCtx.locale,
+    slots: { inject: (k, cb) => cb(), register: (o, c) => { regs2.push({ o, c }); return () => {}; } },
+  };
+  let threw = null;
+  try { mod2.apply(ctx2); } catch (e) { threw = e; }
+  check('primitives 缺失时 apply 不抛错', threw === null, String(threw));
+  const nodeReg2 = regs2.find((r) => r.o.name === 'conversation.chat.node');
+  let threw2 = null;
+  let nodes2 = [];
+  try { nodes2 = flatten(render(React.createElement(nodeReg2.c, baseProps()))); } catch (e) { threw2 = e; }
+  check('primitives 缺失时渲染不抛错', threw2 === null, String(threw2));
+  check('primitives 缺失时降级为纯文本思考', nodes2.some((n) => n.props?.className === 'dst-plain-reasoning'));
+  primitivesAvailable = true;
+}
+
+/* --- 设置行 ------------------------------------------------------------ */
+{
+  const tree = render(settingsReg.component());
+  check('SettingsRow 渲染出元素树', !!tree && typeof tree.type === 'string', `type=${typeof tree?.type}`);
+  const flat = JSON.stringify(tree);
+  check('设置行使用 locale 文案（中文标题）', flat.includes('深度思考面板'));
+  check('设置行使用主题令牌', flat.includes('--dsw-alias-label-primary'));
+
+  // 回归：早先是自绘的文字 button —— 深色主题下 --dsw-alias-brand-primary 与
+  // --dsw-alias-label-primary 都是白色，白底白字，「已启用」几乎读不出来。
+  // 现在优先用官方 Switch（与同页官方条目同款），primitives 缺失时才退回自绘滑块。
+  const sw = flatten(tree).find((n) => n.type === 'switch');
+  check('设置行使用官方 Switch 组件', !!sw);
+  check('Switch 受控：checked 反映当前开关状态', typeof sw?.props?.checked === 'boolean');
+  check('Switch 带无障碍 label', typeof sw?.props?.label === 'string' && sw.props.label.length > 0);
+  check('Switch 的 onChange 是函数', typeof sw?.props?.onChange === 'function');
+  check('不再渲染白底白字的文字按钮', !flat.includes('aria-pressed'));
+}
+
+/* ================================================================== *
+ * 3. 规格交叉比对（回查 DSH 出厂源码）
+ * ================================================================== */
+console.log('\n[3] 规格交叉比对 vs DSH 出厂源码');
+
+function readSrc(name) {
+  if (!haveSrc) return null;
+  const p = path.join(srcDir, name);
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
+}
+const uiChat = readSrc('ui-chat-client.js');
+const themeJs = readSrc('ui-theme-client.js');
+const catalog = haveCatalog ? fs.readFileSync(catalogPath, 'utf8') : null;
+
+/** 第 [3] 节专用：缺出厂源码时 SKIP（而不是把「没材料」报成「不符合」）。 */
+const spec = (name, ok) => (haveSrc ? check(name, ok) : skip(name, '未提供出厂源码目录'));
+/** 槽目录是另一份材料，单独判定。 */
+const specCatalog = (name, ok) => (haveCatalog ? check(name, ok) : skip(name, '未提供槽目录 DSH_SLOT_CATALOG'));
+
+if (!haveSrc) {
+  console.log('  提示：未提供出厂源码目录 —— 本节断言记为 SKIP。');
+  console.log('        启用方式： DSH_SRC_DIR=<解包源码目录> node tools/verify.mjs');
+}
+
+spec('已提取 ui-chat-client.js', !!uiChat);
+spec('已提取 ui-theme-client.js', !!themeJs);
+
+spec('出厂确有 assistant-step 定义', !!uiChat && uiChat.includes('"assistant-step"'));
+spec('出厂确有 groupPart=reasoning 过滤规则', !!uiChat && /groupPart === "reasoning" && block\.kind !== "reasoning"/.test(uiChat));
+spec('出厂确有 groupPart=response 过滤规则', !!uiChat && /groupPart === "response" && block\.kind === "reasoning"/.test(uiChat));
+spec('出厂确实跳过 tool-call 块', !!uiChat && /case "tool-call": break;/.test(uiChat));
+spec('出厂图片块走 renderMessageImages', !!uiChat && /renderMessageImages\(\{\s*images:/.test(uiChat));
+spec('出厂 owner props 含 turnProcess/fileMentions/renderMessageImages', !!uiChat
+  && /renderMessageImages,/.test(uiChat) && /fileMentions,/.test(uiChat) && /turnProcess/.test(uiChat));
+spec('出厂 hookContext = { turnData, disclosureReset }', !!uiChat
+  && /hookContext = \(0, react\.useMemo\)\(\(\) => \(\{\s*turnData,\s*disclosureReset\s*\}\),/.test(uiChat));
+specCatalog('出厂 keyed 槽语义：重复 key 会替换占位者', !!catalog
+  && /Registering an already-occupied key replaces that occupant/.test(catalog));
+specCatalog('槽目录确认 assistant-step 已被占位', !!catalog
+  && /client-ui-chat AssistantNodeView key 'assistant-step'/.test(catalog));
+specCatalog('槽目录确认 replaceRisk = shadows-shipped-ui', !!catalog
+  && /replaceRisk: "shadows-shipped-ui"/.test(catalog));
+
+for (const tok of [
+  '--dsw-alias-label-dimmed',
+  '--dsw-alias-label-secondary',
+  '--dsw-alias-label-primary',
+  '--dsw-alias-label-caption',
+  '--dsw-alias-brand-primary',
+  '--dsw-font-markdown-small',
+]) {
+  spec(`DSH 主题定义了 ${tok}`, !!themeJs && themeJs.includes(tok));
+}
+
+/* ================================================================== *
+ * 4. 自更新接线（核心逻辑由 tools/test-self-update.mjs 单独覆盖）
+ * ================================================================== */
+console.log('\n[4] 自更新接线');
+
+const selfUpdateSrc = fs.readFileSync(path.join(pkgDir, 'self-update.js'), 'utf8');
+const indexSrc = fs.readFileSync(path.join(pkgDir, 'index.js'), 'utf8');
+
+check('self-update.js 存在且导出 createSelfUpdater', /export function createSelfUpdater/.test(selfUpdateSrc));
+check('Host 侧注册了自更新路由',
+  /webCtx\.webServer\.register\(\{ kind: 'prefix', path: ROUTE_PREFIX, handler \}\)/.test(indexSrc));
+check('路由前缀与 Client 侧一致',
+  /const ROUTE_PREFIX = '\/dsh-thinking-panel\/update'/.test(indexSrc)
+  && /const UPDATE_ROUTE = '\/dsh-thinking-panel\/update'/.test(clientSrc));
+check('端点复用 DSH 的鉴权边界',
+  /webCtx\.connection\.requestRejection\(req\)/.test(indexSrc));
+check('变更类方法要求 POST', /const MUTATING = new Set\(\['check', 'install', 'rollback', 'auto-update'\]\)/.test(indexSrc));
+check('自更新按需注入 webServer（缺了也不影响插件本身）',
+  /ctx\.inject\(\['connection', 'webServer'\]/.test(indexSrc));
+check('Client 侧端点不可用时静默隐藏（不阻断插件）',
+  /catch\(\(\) => \{ \/\* 端点不可用：保持 null，整块不渲染 \*\/ \}\)/.test(clientSrc));
+check('更新改到 Host 半部时提示需要重启',
+  /restartRequired/.test(selfUpdateSrc) && /update\.installedRestart/.test(clientSrc));
+check('回滚过的版本不会被自动装回来（holdVersion）',
+  /holdVersion/.test(selfUpdateSrc) && /state\.holdVersion === latest/.test(selfUpdateSrc));
+check('下载有超时与体积上限', /timeoutMs/.test(selfUpdateSrc) && /maxBytes/.test(selfUpdateSrc));
+check('package.json 的 files 收录了 self-update.js',
+  JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')).files.includes('self-update.js'));
+
+/* ================================================================== */
+console.log(`\n==================== ${pass} passed, ${fail} failed${skipped ? `, ${skipped} skipped` : ''} ====================`);
+if (skipped) {
+  console.log(`跳过 ${skipped} 项（缺少出厂源码材料，不是失败）：`);
+  for (const s of skips) console.log(`  - ${s}`);
+}
+if (fail) {
+  console.log('失败项:');
+  for (const f of failures) console.log(`  - ${f}`);
+  process.exitCode = 1;
+}

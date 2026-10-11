@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+
+# 打包产物
+*.tgz
+*.tar.gz
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地环境：不要把本机路径、凭据、个人标识带进仓库
+.env
+.env.*
+!.env.example

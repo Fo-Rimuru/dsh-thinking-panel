@@ -1,0 +1,74 @@
+name: 🐛 问题反馈 / Bug report
+description: 插件没生效、显示异常、控制台报错等
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量把下面填全 —— 这个插件的失效模式大多和 **DSH 版本**强相关，
+        少一项信息往往就要来回问好几轮。
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本
+      description: 「设置 → 通用」拉到最底部的「当前版本」
+      placeholder: 例如 0.2.0-rc.2
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: 插件目录里 package.json 的 version 字段
+      placeholder: 例如 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: 现象
+      options:
+        - 插件列表里根本看不到这个插件
+        - 能看到插件，但思考面板没有变成官方样式
+        - 思考面板样式不对（竖线 / 图标 / 标题 / 耗时）
+        - 思考内容没有跟随我的语言
+        - 展开态的滚动行为异常
+        - 控制台报错，或整行空白
+        - 其他（请在下方说明）
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开 …
+        2. 发送 …
+        3. 看到 …
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: 控制台输出
+      description: F12 → Console，搜 `dsh-thinking-panel`，把相关内容贴进来（没有就写「无」）
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: self-check
+    attributes:
+      label: 自查（请实际执行后再勾选）
+      description: 这几条能直接把问题范围缩小一半
+      options:
+        - label: 页面里存在 `.dst-think` 元素（说明遮蔽已生效）
+        - label: 控制台**没有**出现 `could not shadow assistant-step; shipped renderer stays`
+        - label: 控制台**没有**出现 `[dsh-thinking-panel] render failed`
+        - label: 改过 `index.js` 之后**重启过 DSH**（Host 半部不热加载）

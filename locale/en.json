@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-thinking-panel[Thinking Panel]",
+    "description": "Makes reasoning follow the user's language, and renders an assistant-step panel matching the official DeepSeek client: multi-line live preview while thinking, expandable full reasoning, left rail, and a duration title."
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "name": "dsh-thinking-panel",
+  "version": "0.1.0",
+  "description": "DeepSeek 官方思考链完整复刻：思考内容跟随用户语言，并以自绘的 assistant-step 渲染器对齐官方思考面板（思考中多行滚动预览、展开看完整推理、左侧竖线、深度思考标题与耗时）。 Full DeepSeek thinking-chain parity: reasoning language follows the user, and a self-owned assistant-step renderer reproduces the official thinking panel.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Fo-Rimuru",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fo-Rimuru/dsh-thinking-panel.git"
+  },
+  "homepage": "https://github.com/Fo-Rimuru/dsh-thinking-panel#readme",
+  "bugs": {
+    "url": "https://github.com/Fo-Rimuru/dsh-thinking-panel/issues"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "meta": {
+    "title": "dsh-thinking-panel[深度思考面板]",
+    "description": "让思考内容跟随用户输入语言；并以自绘的 assistant-step 渲染器对齐官方 DeepSeek 思考面板（思考中多行滚动预览、展开看完整推理、左侧竖线、「已思考（用时 X 秒）」标题）。"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-settings-general"
+      ],
+      "external": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "self-update.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs/*.md",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "reasoning",
+    "thinking",
+    "chain-of-thought",
+    "assistant-step"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-system-prompt": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-chat": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings-general": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.2.0-rc.1",
+    "react": ">=18.2.0"
+  }
+}

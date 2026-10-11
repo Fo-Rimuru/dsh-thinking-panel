@@ -1,0 +1,181 @@
+
+[1] Host 半部 (index.js)
+  PASS  导出 apply 函数
+  PASS  inject 含 systemPrompt
+  PASS  SECTION_ORDER 是有限数
+  PASS  SECTION_ORDER 排在系统提示词最末（> DEPLOYMENT_PERSONA_SUFFIX 10200）
+  PASS  CONTEXT_ORDER 排在既有上下文之后（> SUBAGENT_DELEGATION 120）
+  PASS  apply 通过 ctx.effect 注册资源
+  PASS  每个 ctx.effect 都带诊断 label
+  PASS  注册了恰好 1 个 PromptSection
+  PASS  注册了恰好 1 个运行时上下文
+  PASS  PromptSection.name 为非空字符串
+  PASS  PromptSection.order 有限（非有限值会 throw）
+  PASS  PromptSection.text 为非空字符串
+  PASS  规则文本要求「与用户最近一条消息相同的语言」
+  PASS  规则文本声明只约束思考过程
+  PASS  SECTION_NAME 与 PromptSection.name 一致
+  PASS  SECTION_NAME 与 CONTEXT_NAME 不同（两个注册表）
+  PASS  PromptContext.name 正确
+  PASS  PromptContext.order 有限
+  PASS  运行时上下文要求「立即生效」
+  PASS  运行时上下文比段落更短（更贴近生成点）
+  PASS  mode=auto 注册段落且文本命中关键词
+  PASS  mode=auto 注册上下文
+  PASS  mode=zh 注册段落且文本命中关键词
+  PASS  mode=zh 注册上下文
+  PASS  mode=en 注册段落且文本命中关键词
+  PASS  mode=en 注册上下文
+  PASS  mode=off 不注册段落
+  PASS  mode=off 不注册上下文
+  PASS  未知 mode 回落到 auto
+
+[2] Client 半部 (client.js)
+  PASS  模块加载时恰好注册 1 个 factory
+  PASS  模块 id 等于包名
+  PASS  factory 是函数
+  PASS  factory 返回 inject 列表
+  PASS  inject 含 slots 与 locale
+  PASS  注册了 locale 字典（新命名空间）
+  PASS  字典含 zh 与 en 两套
+  PASS  locale 注册走 ctx.effect
+  PASS  slots.inject 了 shell.overlay
+  PASS  slots.inject 了 settings.general.item
+  PASS  slots.inject 了 conversation.chat.node
+  PASS  恰好注册 3 个 slot 条目
+  PASS  shell.overlay 条目 id 正确
+  PASS  settings.general.item 条目 id 正确
+  PASS  conversation.chat.node 条目 key = assistant-step
+  PASS  conversation.chat.node 条目用更低优先级遮蔽（运行时要求 lowest renders）
+  PASS  注册失败时不抛出（出厂渲染器保持可用）
+  PASS  三个条目组件都是函数
+  PASS  StyleSeat 渲染出 <style> 元素
+  PASS  style 带 data-plugin 标记
+  PASS  CSS 非空
+  PASS  CSS 含自有命名空间 dst-think
+  PASS  CSS 含左侧竖线
+  PASS  CSS 含竖线定位 left:7.5px
+  PASS  CSS 含官方容器内边距
+  PASS  CSS 含图标品牌色
+  PASS  CSS 含标题常态色
+  PASS  CSS 含标题悬停色
+  PASS  CSS 含正文官方字体令牌
+  PASS  CSS 含预览高度上限 5×行高+10dp
+  PASS  CSS 含预览可滚动
+  PASS  CSS 含滚动淡出遮罩
+  PASS  CSS 含折叠推理块间距（出厂同构）
+  PASS  CSS 含展开态有高度上限
+  PASS  CSS 含展开态可内部滚动
+  PASS  CSS 含展开态显式绘制滚动条
+  PASS  CSS 含滚动条滑块可拖动样式
+  PASS  CSS 不再针对出厂类名做覆盖
+  PASS  存在错误边界类组件
+  PASS  错误边界实现 getDerivedStateFromError
+  PASS  错误边界实现 componentDidCatch 记录日志
+  PASS  assistant-step 输出被错误边界包裹
+  PASS  存在不依赖任何客户端包的纯文本兜底
+  PASS  复刻 useSearchableHidden
+  PASS  折叠态使用 hidden="until-found"（保留页内查找）
+  PASS  监听 beforematch 以支持页内查找揭示
+  PASS  推理块外层带 data-turn-process-inline 锚点
+  PASS  复刻 markdownLabels 工厂
+  PASS  labels 含 code.toolbarLabels 完整形状
+  PASS  labels 含 footnotes
+  PASS  每处 MarkdownText 都传 labels
+  PASS  默认渲染出思考面板
+  PASS  思考面板含标题行
+  PASS  标题行含思考图标
+  PASS  思考中标题为「深度思考中」
+  PASS  思考面板带 data-state="running"
+  PASS  折叠态带 data-collapsed（可展开）
+  PASS  折叠态渲染预览容器
+  PASS  预览容器渲染完整推理文本
+  PASS  默认用例同时渲染思考与正文
+  PASS  reasoning 非尾部时不再显示「深度思考中」
+  PASS  groupPart=reasoning 保留思考面板
+  PASS  groupPart=reasoning 过滤掉正文块
+  PASS  groupPart=response 跳过思考面板
+  PASS  groupPart=response 保留正文
+  PASS  tool-call 块不在本节点渲染
+  PASS  图片块调用 renderMessageImages
+  PASS  连续图片合并为一组（2 张）
+  PASS  图片组 align=start
+  PASS  思考结束标题为「已思考」
+  PASS  思考结束 data-state="ok"
+  PASS  展开态渲染 dst-think-body
+  PASS  展开态不渲染预览容器
+  PASS  展开态滚动容器挂了滚动 ref
+  PASS  展开态注册了 onScroll
+  PASS  展开态也自动滚到底部（跟随最新内容）
+  PASS  空 blocks 返回 null
+  PASS  正文 Markdown 收到 labels
+  PASS  labels.code.toolbarLabels 完整
+  PASS  labels.code.copyLabel / copiedLabel 存在
+  PASS  labels.footnotes 存在
+  PASS  思考面板 Markdown 也收到 labels
+  PASS  运行中渲染出预览容器
+  PASS  预览容器挂了滚动 ref
+  PASS  运行中自动滚到底部（跟随最新内容）
+  PASS  预览容器注册了 onScroll
+  PASS  程序化滚动事件不改变滚动位置
+  PASS  用户拖动后不再强制回底（单次渲染内无可观测副作用）
+  PASS  区分程序化滚动与用户滚动
+  PASS  程序化滚动标记用 rAF 清除（scroll 事件先于下一帧）
+  PASS  已移除会误判的 userScrolled 标记
+  PASS  距底部 24px 内视为跟随中
+  PASS  跟随 effect 不再跳过展开态（回归：曾写成 `|| expanded`）
+  PASS  展开态与折叠态共用同一个滚动 ref
+  PASS  耗时记账表有上限（防长时间运行缓慢泄漏）
+  PASS  超限时按插入顺序淘汰最早的条目
+  PASS  noteRunning 对已存在的 key 幂等（严格模式双调用安全）
+  PASS  key 不会退化成 "undefined:undefined"
+[dsh-thinking-panel] 兼容性提示：取不到 @deepseek-ai/dsh-client-ui-primitives
+  思考面板会降级为纯文本渲染：功能仍在，但没有 Markdown 排版与思考图标。
+  插件会尽量继续以降级方式运行。若外观退回出厂样式，多半是 DSH 升级后接口变了。
+  反馈：https://github.com/Fo-Rimuru/dsh-thinking-panel/issues
+  PASS  primitives 缺失时 apply 不抛错
+  PASS  primitives 缺失时渲染不抛错
+  PASS  primitives 缺失时降级为纯文本思考
+  PASS  SettingsRow 渲染出元素树
+  PASS  设置行使用 locale 文案（中文标题）
+  PASS  设置行使用主题令牌
+  PASS  设置行使用官方 Switch 组件
+  PASS  Switch 受控：checked 反映当前开关状态
+  PASS  Switch 带无障碍 label
+  PASS  Switch 的 onChange 是函数
+  PASS  不再渲染白底白字的文字按钮
+
+[3] 规格交叉比对 vs DSH 出厂源码
+  PASS  已提取 ui-chat-client.js
+  PASS  已提取 ui-theme-client.js
+  PASS  出厂确有 assistant-step 定义
+  PASS  出厂确有 groupPart=reasoning 过滤规则
+  PASS  出厂确有 groupPart=response 过滤规则
+  PASS  出厂确实跳过 tool-call 块
+  PASS  出厂图片块走 renderMessageImages
+  PASS  出厂 owner props 含 turnProcess/fileMentions/renderMessageImages
+  PASS  出厂 hookContext = { turnData, disclosureReset }
+  PASS  出厂 keyed 槽语义：重复 key 会替换占位者
+  PASS  槽目录确认 assistant-step 已被占位
+  PASS  槽目录确认 replaceRisk = shadows-shipped-ui
+  PASS  DSH 主题定义了 --dsw-alias-label-dimmed
+  PASS  DSH 主题定义了 --dsw-alias-label-secondary
+  PASS  DSH 主题定义了 --dsw-alias-label-primary
+  PASS  DSH 主题定义了 --dsw-alias-label-caption
+  PASS  DSH 主题定义了 --dsw-alias-brand-primary
+  PASS  DSH 主题定义了 --dsw-font-markdown-small
+
+[4] 自更新接线
+  PASS  self-update.js 存在且导出 createSelfUpdater
+  PASS  Host 侧注册了自更新路由
+  PASS  路由前缀与 Client 侧一致
+  PASS  端点复用 DSH 的鉴权边界
+  PASS  变更类方法要求 POST
+  PASS  自更新按需注入 webServer（缺了也不影响插件本身）
+  PASS  Client 侧端点不可用时静默隐藏（不阻断插件）
+  PASS  更新改到 Host 半部时提示需要重启
+  PASS  回滚过的版本不会被自动装回来（holdVersion）
+  PASS  下载有超时与体积上限
+  PASS  package.json 的 files 收录了 self-update.js
+
+==================== 167 passed, 0 failed ====================

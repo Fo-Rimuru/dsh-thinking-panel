@@ -1,0 +1,31 @@
+name: 💡 功能建议 / Feature request
+description: 想要新增或调整的行为
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题
+      description: 请描述使用场景，而不是直接给方案 —— 这样更容易找到更合适的做法
+      placeholder: 我在 … 的时候，希望 …，因为 …
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你设想的做法（可选）
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        > **提醒**：本插件刻意保留了几处「与官方客户端不同」的行为 ——
+        > 例如展开态的高度上限、预览跟随尾部而不是钉在顶部。
+        > 这些差异都是有意的（可用性取舍），原因写在 README 的「已知限制」与
+        > 「与官方剩余的两处差异」里。
+        >
+        > 如果你的建议本质上是「改回官方行为」，请先说明为什么 —— 或者直接说
+        > 你更想要官方行为也行，那也是个有效意见。

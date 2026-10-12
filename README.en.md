@@ -21,6 +21,21 @@ DSH's shipped thinking chain differs from the official client in four ways:
 
 ## Honest limitations first
 
+### Can't see the thinking chain?
+
+DSH **defaults to "Standard" on desktop**: the process you are currently running is folded into a
+"process group", and this plugin's panel lives inside that group — so you have to **open the process
+group first** (and click once more for the full text). That is why a fresh install can look like it
+did nothing.
+
+To have it **visible by default**, like the animations above, set
+**Settings → General → Work details** to **Detailed**: while a turn is running, that is the only
+difference from Standard (settled turns are folded in all four modes — that is DSH's own design).
+
+This is not a bug the plugin can fix: the panel is a member of the shipped process group, and whether
+that group is open is decided by DSH's own process-group renderer. Changing that would mean rewriting
+the shipped process group, so we document it instead.
+
 **Language following is a prompt-level constraint and is effectively useless in heavy agent sessions.**
 Clean short conversations measured CJK 0.399–0.607 (control group 0.000), but an agent session stuffed with
 English tool output measured only **0.012** — this is an inherent limit set by the model's context, not an

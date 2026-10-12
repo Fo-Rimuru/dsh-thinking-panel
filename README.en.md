@@ -164,6 +164,10 @@ After that, both `github:owner/repo` and full URLs go over HTTPS and no SSH key 
 
 ## Self-update and rollback
 
+> **DSH does not support automatic plugin updates yet** — its install dialog says as much
+> ("Installed plugins do not update automatically yet. To upgrade a plugin, uninstall it and
+> install the new version."). **This plugin updates itself; no uninstall/reinstall needed.**
+
 The plugin updates itself; the controls live right under **Settings → General → Thinking Panel**.
 
 | Action | Behaviour |

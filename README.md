@@ -129,8 +129,11 @@ Host key verification failed.                      ← 没有 known_hosts
 git@github.com: Permission denied (publickey).     ← 有 known_hosts 但没 SSH key
 ```
 
-**这条路本身不稳定**：同一台机器可能这次走 HTTPS 成功、下次走 SSH 失败。
-所以**首选 npm 通道**（完全不经过 git）：
+**这条路偶尔会失败**：多数情况 pnpm 走 HTTPS 正常安装（实测 `https://github.com/Fo-Rimuru/dsh-thinking-panel`
+和 `github:Fo-Rimuru/dsh-thinking-panel` 两种写法都成功、几秒完成），但它**有时**会改用 SSH 协议去解析引用，
+没配 SSH key 的机器就会报上面两种错。**遇到失败时**：先重试一次，仍失败就按下面的办法处理。
+
+**最稳妥的是 npm 通道**（完全不经过 git）：
 
 ```powershell
 & $dsh plugin --profile desktop add dsh-thinking-panel

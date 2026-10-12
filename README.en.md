@@ -138,8 +138,13 @@ Host key verification failed.                      # no known_hosts
 git@github.com: Permission denied (publickey).     # known_hosts present, no key
 ```
 
-**This path is inherently unreliable** — the same machine may take HTTPS one time and SSH the
-next. So **prefer the npm channel**, which never touches git:
+**This path occasionally fails**: most of the time pnpm uses HTTPS and installs fine (both
+`https://github.com/Fo-Rimuru/dsh-thinking-panel` and `github:Fo-Rimuru/dsh-thinking-panel`
+were measured working in a few seconds), but it *sometimes* resolves the reference over SSH,
+and a machine with no SSH key then reports one of the errors above. **On failure**: retry once;
+if it still fails, use the advice below.
+
+**The npm channel is the most reliable** (it never touches git):
 
 ```powershell
 & $dsh plugin --profile desktop add dsh-thinking-panel

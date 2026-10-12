@@ -6,7 +6,7 @@
 
 中文提问就用中文思考；思考中显示多行滚动预览，展开能看到完整推理。
 
-![思考中：多行滚动预览](docs/preview-thinking.gif)
+![思考中：多行滚动预览](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-thinking.gif)
 
 ## 它解决什么问题
 
@@ -47,15 +47,15 @@ DSH 出厂的思考链和官方客户端有五处不一样：
 
 | 画面 | 说明 |
 |---|---|
-| ![思考中](docs/preview-thinking.png) | **思考中（折叠态）**：`深度思考中` + 5 行滚动预览 + 底部淡出遮罩 |
-| ![展开态](docs/preview-expanded.png) | **展开态**：完整长推理 + 自带可拖动滚动条 |
-| ![已思考](docs/preview-collapsed.png) | **思考结束**：`已思考，用时 23 秒`，折叠回摘要 |
-| ![设置行](docs/preview-settings.png) | **设置 → 通用**：官方同款滑块开关 |
+| ![思考中](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-thinking.png) | **思考中（折叠态）**：`深度思考中` + 5 行滚动预览 + 底部淡出遮罩 |
+| ![展开态](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-expanded.png) | **展开态**：完整长推理 + 自带可拖动滚动条 |
+| ![已思考](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-collapsed.png) | **思考结束**：`已思考，用时 23 秒`，折叠回摘要 |
+| ![设置行](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-settings.png) | **设置 → 通用**：官方同款滑块开关 |
 
 动图（原分辨率 2560×1440，点击可放大）：
 
-- [`docs/preview-thinking.gif`](docs/preview-thinking.gif) —— 思考中滚动跟随（8 秒）
-- [`docs/preview-expanded.gif`](docs/preview-expanded.gif) —— 折叠 → 展开 → 内容继续增长（8 秒）
+- [`docs/preview-thinking.gif`](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-thinking.gif) —— 思考中滚动跟随（8 秒）
+- [`docs/preview-expanded.gif`](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-expanded.gif) —— 折叠 → 展开 → 内容继续增长（8 秒）
 
 ## 安装
 

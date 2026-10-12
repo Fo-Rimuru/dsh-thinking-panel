@@ -6,7 +6,7 @@
 
 Ask in Chinese, think in Chinese; watch a multi-line scrolling preview while it thinks, and expand it to read the full reasoning.
 
-![Thinking — multi-line scrolling preview](docs/preview-thinking.gif)
+![Thinking — multi-line scrolling preview](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-thinking.gif)
 
 ## What it solves
 
@@ -51,15 +51,15 @@ implementation bug. See [Known limitations](#known-limitations).
 
 | | |
 |---|---|
-| ![Thinking](docs/preview-thinking.png) | **While thinking (collapsed)**: `Thinking` + 5-line scrolling preview + bottom fade |
-| ![Expanded](docs/preview-expanded.png) | **Expanded**: full reasoning with its own draggable scrollbar |
-| ![Settled](docs/preview-collapsed.png) | **Settled**: `Thought for 23s`, collapsed back to a summary |
-| ![Settings](docs/preview-settings.png) | **Settings → General**: the official-style switch |
+| ![Thinking](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-thinking.png) | **While thinking (collapsed)**: `Thinking` + 5-line scrolling preview + bottom fade |
+| ![Expanded](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-expanded.png) | **Expanded**: full reasoning with its own draggable scrollbar |
+| ![Settled](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-collapsed.png) | **Settled**: `Thought for 23s`, collapsed back to a summary |
+| ![Settings](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-settings.png) | **Settings → General**: the official-style switch |
 
 Animated (native 2560×1440, click to enlarge):
 
-- [`docs/preview-thinking.gif`](docs/preview-thinking.gif) — preview following new content (8s)
-- [`docs/preview-expanded.gif`](docs/preview-expanded.gif) — collapse → expand → content keeps growing (8s)
+- [`docs/preview-thinking.gif`](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-thinking.gif) — preview following new content (8s)
+- [`docs/preview-expanded.gif`](https://raw.githubusercontent.com/Fo-Rimuru/dsh-thinking-panel/main/docs/preview-expanded.gif) — collapse → expand → content keeps growing (8s)
 
 
 ## Install

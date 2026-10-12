@@ -10,7 +10,7 @@
 
 ## 它解决什么问题
 
-DSH 出厂的思考链和官方客户端有四处不一样：
+DSH 出厂的思考链和官方客户端有五处不一样：
 
 | | 出厂行为 | 装上之后 |
 |---|---|---|
@@ -18,19 +18,24 @@ DSH 出厂的思考链和官方客户端有四处不一样：
 | **思考中预览** | 折叠态是**结构性单行**（`contain:size` + `nowrap`），只给你一行摘要 | 显示**完整推理正文**的 5 行滚动预览，自动跟随最新内容 |
 | **展开** | 无高度约束，长推理只能靠整页滚动 | 自带高度受限容器与**可拖动的滚动条** |
 | **细节** | 没有左侧竖线，没有耗时标题 | 竖线、品牌色图标、`深度思考中` / `已思考（用时 X 秒）` 全部对齐 |
+| **看得见** | 桌面端默认「标准」：正在生成的过程被折叠进「过程组」，**要先点开才看得到** | **默认自动展开**过程组，思考链直接出现（可在设置里关掉） |
 
 ## 先说清楚限制
 
 ### 看不到思考链？
 
-DSH **桌面端默认是「标准」**：你正在思考的过程会被折叠进「过程组」，而本插件的面板就在那个组里
-—— 要**先点开过程组**才看得到它（再点一次才展开全文）。"装完好像没效果"基本都是这个原因。
+**先看这一条：0.1.1 起默认自动展开，装上就能看到。** 背景是 —— DSH 桌面端的
+「工作步骤展示」默认是「标准」：正在生成的过程会被折叠进「过程组」，而本插件的面板就在那个组里，
+出厂行为下要**先点开过程组**才看得到它（再点一次才展开全文）。
 
-想让它像上面的动图那样**默认直接可见**，把 **设置 → 通用设置 → 工作步骤展示模式** 改成 **详细**：
-「详细」和「标准」在**运行中**的唯一区别就是过程行不折叠（已结束的轮次四种模式都会收起，这是 DSH 自己的设计）。
+插件现在会在**正在生成**的那一轮自动帮你展开它：走的是官方自己的揭示通道
+（组体上的 `beforematch` → `setOpen(true)`），不抢焦点、不直接改 DOM、不绕过 React 状态机；
+万一那条通道在某个版本失效，才退回点击组头并把焦点还回去。
+设置项在 **设置 → 通用 → 深度思考面板 → 自动展开过程组**，**默认打开**。
 
-这不是插件能「修好」的 bug：面板是出厂过程组的成员，展开与否由 DSH 的过程组渲染器决定
-（`ChatGroupSeat` 的 `stepGrouping` 策略）。要改它，等于把出厂过程组整个重写一遍 —— 所以我们如实写在这里。
+关掉它之后，"看不到思考链"就会回来 —— 那时把
+**设置 → 通用设置 → 工作步骤展示模式** 改成 **详细** 即可：「详细」和「标准」在**运行中**的唯一
+区别就是过程行不折叠。（已结束的轮次四种模式都会收起，那是 DSH 自己的设计，插件不去改写它。）
 
 **语言跟随是提示词级约束，在重度 agent 会话里基本无效。**
 干净短会话实测 CJK 0.399–0.607（对照组 0.000），但塞满英文工具输出的 agent 会话只有 **0.012**
@@ -105,7 +110,7 @@ DSH 的插件安装命令只是把参数透传给 pnpm，格式是：
 ```powershell
 & $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel'
 # 锁定版本：
-& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.1.0'
+& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.1.1'
 ```
 
 > 需要本机有 `git`。装的是**默认分支最新提交**，没有版本语义；更新要 `pnpm update`。
@@ -465,7 +470,8 @@ DSH 升级后最常见的是**被兼容性闸门拦下**（见上一节的 `peer
 
 - **遇到问题 / 想要新功能**：[开一个 Issue](https://github.com/Fo-Rimuru/dsh-thinking-panel/issues)
   —— Bug 模板会引导你填 DSH 版本、控制台输出和几条自查项，这几项能省掉好几轮来回
-- **Pull Request**：欢迎。改完请先跑 `node tools/verify.mjs`（见下），确保 149 项通过
+- **Pull Request**：欢迎。改完请先跑 `node tools/verify.mjs`（见下），确保 161 项通过
+  （准备了出厂源码副本则是 184 项）
 - **提问也是 Issue**：选 Bug 模板即可，问题可搜索、可追溯，别人遇到同样情况能直接搜到
 
 > 提 Issue 前建议先看一眼 [已知限制](#已知限制) —— 「语言跟随在重度 agent 会话里无效」
@@ -474,15 +480,17 @@ DSH 升级后最常见的是**被兼容性闸门拦下**（见上一节的 `peer
 ## 自检
 
 ```powershell
-# 167 项契约自检：Host 半部的 PromptSection 契约与四种 mode；Client 半部的模块注册、
+# 184 项契约自检：Host 半部的 PromptSection 契约与四种 mode；Client 半部的模块注册、
 # locale、三个 slot 条目、<style> 内容；并真实渲染 assistant-step 组件树
-# （分组过滤 / tool-call / 图片合并 / 错误边界 / 滚动跟随 / 空 blocks / 官方 Switch）
+# （分组过滤 / tool-call / 图片合并 / 错误边界 / 滚动跟随 / 空 blocks / 官方 Switch /
+#   自动展开过程组：beforematch 通道、焦点兜底、已结束轮次不插手、开关默认打开）
 node tools\verify.mjs
-#   无出厂源码时 → 149 passed, 0 failed, 18 skipped
-#   有出厂源码时 → 167 passed, 0 failed
+#   无出厂源码时 → 161 passed, 0 failed, 23 skipped
+#   有出厂源码时 → 181 passed, 0 failed, 3 skipped
+#   再提供槽目录 → 184 passed, 0 failed
 ```
 
-其中 18 项是「回查 DSH 出厂源码」的交叉比对，需要你自己准备一份解包副本才会执行：
+其中 23 项是「回查 DSH 出厂源码」的交叉比对，需要你自己准备一份解包副本才会执行：
 
 ```powershell
 $env:DSH_SRC_DIR = '<含 ui-chat-client.js / ui-theme-client.js 的目录>'
@@ -503,12 +511,13 @@ node tools\test-self-update.mjs
 ```
 
 CI 也会跑这两项（[`.github/workflows/verify.yml`](.github/workflows/verify.yml)），
-所以每次 push 都会看到那 149 项是否通过。
+所以每次 push 都会看到那 161 项（无出厂源码时）是否通过。
 
 ## 卸载
 
 **设置 → 插件** 里移除即可；插件不写任何 DSH 核心文件、不改会话日志。
-开关状态存在 `localStorage['dsh-thinking-panel.enabled']`。
+开关状态存在 `localStorage`：`dsh-thinking-panel.enabled`（总开关）与
+`dsh-thinking-panel.auto-reveal-process`（自动展开过程组，默认打开）。
 
 ## 许可
 

@@ -9,7 +9,11 @@
  *       · 思考中：N 行可滚动预览（对齐官方 5×lineHeight + 10dp 的高度上限）
  *       · 思考结束：折叠为摘要行，可展开看完整推理
  *       · 左侧引导竖线、品牌色图标、「深度思考」标题、思考耗时
- *  2. shell.overlay 注入自身样式；settings.general.item 提供开关行。
+ *  2. shell.overlay 注入自身样式；settings.general.item 提供两行开关
+ *     （插件总开关 + 「自动展开过程组」，后者**默认打开**）。
+ *  3. 自动展开过程组：出厂把 reasoning 分组的 assistant-step 归进「过程组」，
+ *     而「简洁 / 标准」下过程组默认收起（桌面端默认正是「标准」）—— 不自动展开的话，
+ *     装完插件只会看到一行过程组头。见 revealProcessGroup()。
  *
  * 规格来源（均为出厂源码原文，非推测）：
  *  · owner props：ChatNodeSeat 构造的 { groupPart?, cwd, openFile, openSkill,
@@ -85,6 +89,11 @@ window.__ModuleLoader__.load({
       'settings.on': '已启用',
       'settings.off': '已停用',
       'settings.toggle': '启用官方思考链渲染',
+      'settings.autoReveal.title': '自动展开过程组',
+      'settings.autoReveal.desc': '默认打开。DSH 桌面端默认的「标准」会把正在生成的过程折叠进「过程组」；打开后本插件在生成时自动帮你展开它。已结束的轮次仍按 DSH 的规则收起。',
+      'settings.autoReveal.toggle': '自动展开过程组',
+      'settings.autoReveal.on': '已打开',
+      'settings.autoReveal.off': '已关闭',
       'think.running': '深度思考中',
       'think.done': '已思考',
       'think.stopped': '已停止',
@@ -118,6 +127,11 @@ window.__ModuleLoader__.load({
       'settings.on': 'Enabled',
       'settings.off': 'Disabled',
       'settings.toggle': 'Enable the official thinking-chain renderer',
+      'settings.autoReveal.title': 'Auto-expand the process group',
+      'settings.autoReveal.desc': 'On by default. DSH on desktop defaults to "Standard", which folds the running process into a "process group"; when on, this plugin expands it for you while a turn is running. Settled turns still collapse, as DSH intends.',
+      'settings.autoReveal.toggle': 'Auto-expand the process group',
+      'settings.autoReveal.on': 'On',
+      'settings.autoReveal.off': 'Off',
       'think.running': 'Thinking',
       'think.done': 'Thought',
       'think.stopped': 'Stopped',
@@ -198,23 +212,102 @@ window.__ModuleLoader__.load({
 
     /* ================================================================== *
      * 开关状态
+     *
+     * ⚠️ 只有存过 'true' / 'false' 时才覆盖默认值 —— 这样**新增开关的默认值
+     * 可以随版本调整**，而没碰过这个开关的老用户会跟着新默认走。
      * ================================================================== */
-    const listeners = new Set();
-    let enabled = true;
-    try { if (window.localStorage.getItem(STORAGE_KEY) === 'false') enabled = false; } catch { /* ignore */ }
-    function setEnabled(next) {
-      enabled = next;
-      try { window.localStorage.setItem(STORAGE_KEY, next ? 'true' : 'false'); } catch { /* ignore */ }
-      for (const l of listeners) l();
+    function createToggle(key, fallback) {
+      const subs = new Set();
+      let value = fallback;
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (raw === 'true') value = true;
+        else if (raw === 'false') value = false;
+      } catch { /* ignore */ }
+      return {
+        get: () => value,
+        set: (next) => {
+          value = next === true;
+          try { window.localStorage.setItem(key, value ? 'true' : 'false'); } catch { /* ignore */ }
+          for (const fn of subs) fn();
+        },
+        /** 订阅式读取：开关变化时重渲染读取方。 */
+        use: () => {
+          const [, force] = React.useReducer((n) => n + 1, 0);
+          React.useEffect(() => {
+            const listener = () => force();
+            subs.add(listener);
+            return () => { subs.delete(listener); };
+          }, []);
+          return value;
+        },
+      };
     }
-    function useEnabled() {
-      const [, force] = React.useReducer((n) => n + 1, 0);
-      React.useEffect(() => {
-        const listener = () => force();
-        listeners.add(listener);
-        return () => { listeners.delete(listener); };
-      }, []);
-      return enabled;
+
+    /** 插件总开关：关掉后完全不介入出厂渲染。 */
+    const enabledToggle = createToggle(STORAGE_KEY, true);
+    const useEnabled = enabledToggle.use;
+    const setEnabled = enabledToggle.set;
+    /**
+     * 自动展开过程组 —— **默认打开**。
+     *
+     * 出厂把 reasoning 分组的 assistant-step 归进「过程组」（ChatNodeSeat.processMember），
+     * 而过程组在「简洁 / 标准」下恒可折叠、且默认收起（ChatGroupSeat.grouped +
+     * useSearchableHidden → hidden="until-found"）；桌面端「工作步骤展示」默认正是**标准**。
+     * 不自动展开的话，装完插件只会看到一行过程组头 —— 「思考链没生效」，实测反馈如此。
+     */
+    const AUTO_REVEAL_KEY = 'dsh-thinking-panel.auto-reveal-process';
+    const autoRevealToggle = createToggle(AUTO_REVEAL_KEY, true);
+    const useAutoReveal = autoRevealToggle.use;
+    const setAutoReveal = autoRevealToggle.set;
+
+    /**
+     * 展开包住本面板的「过程组」，让被 hidden="until-found" 挡住的思考面板露出来。
+     *
+     * 优先走官方自己的揭示通道：出厂的 useSearchableHidden 在组体上注册了
+     * `beforematch` → reveal() → setOpen(true)，所以派发一个 beforematch 就等于
+     * 「让浏览器替用户展开」—— 不抢焦点、不动 DOM、不绕过 React 状态机。
+     * 万一那条通道在某个版本失效（下一帧仍是 hidden），退回点击组头，并把焦点还回去：
+     * 出厂组头的 onClick 里有 `currentTarget.focus()`，不还原会把用户正在打字的输入框顶掉。
+     *
+     * @returns 是否已派出揭示事件（false = 当前不需要展开，或环境不支持）。
+     */
+    function revealProcessGroup(el) {
+      if (el === null || el === undefined || typeof el.closest !== 'function') return false;
+      let body = null;
+      try {
+        body = el.closest('[data-step-process-body]');
+        if (body === null || typeof body.hasAttribute !== 'function') return false;
+        if (!body.hasAttribute('hidden')) return false;               // 组本来就是展开的
+      } catch { return false; }
+      const root = typeof body.closest === 'function' ? body.closest('[data-step-process]') : null;
+
+      let dispatched = false;
+      try {
+        if (typeof Event === 'function') {
+          body.dispatchEvent(new Event('beforematch'));
+          dispatched = true;
+        }
+      } catch { dispatched = false; }
+
+      const fallback = () => {
+        try {
+          if (!body.hasAttribute('hidden')) return;                   // 官方通道已经生效
+          const head = root === null ? null : root.querySelector('button[aria-controls]');
+          if (head === null || typeof head.click !== 'function') return;
+          const prev = typeof document !== 'undefined' && document !== null ? document.activeElement : null;
+          head.click();
+          if (prev && prev !== head && typeof prev.focus === 'function') {
+            try { prev.focus({ preventScroll: true }); } catch { /* ignore */ }
+          }
+        } catch { /* ignore */ }
+      };
+      try {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fallback);
+        else fallback();
+      } catch { /* ignore */ }
+
+      return dispatched;
     }
 
     /* ================================================================== *
@@ -365,6 +458,19 @@ window.__ModuleLoader__.load({
         : () => setOwnExpanded((v) => !v);
 
       const scrollRef = React.useRef(null);
+      const rootRef = React.useRef(null);
+      /**
+       * 自动展开过程组（默认打开，可在「设置 → 通用」里关掉）。
+       *
+       * 只作用于**正在生成**的这一轮：已结束的轮次按 DSH 自己的规则收起（四种模式一致），
+       * 不该借这个开关改写它。用户手动收起过之后也不再插手（revealed 标记）。
+       */
+      const autoReveal = useAutoReveal();
+      const revealed = React.useRef(false);
+      React.useEffect(() => {
+        if (!autoReveal || !running || revealed.current) return;
+        if (revealProcessGroup(rootRef.current)) revealed.current = true;
+      }, [autoReveal, running]);
       const [canScroll, setCanScroll] = React.useState(false);
       /**
        * 是否粘住滚动端（默认跟随最新内容）。
@@ -468,6 +574,7 @@ window.__ModuleLoader__.load({
         }, inner);
 
       return h('div', {
+        ref: rootRef,
         className: 'dst-think',
         'data-collapsed': expanded ? undefined : true,
         'data-variant': 'think',
@@ -596,56 +703,85 @@ window.__ModuleLoader__.load({
       return h('style', { 'data-plugin': 'dsh-thinking-panel' }, CSS);
     }
 
+    /**
+     * 通用开关行：标题 + 说明 + 官方 Switch（拿不到 primitives 时退回自绘滑块）。
+     * 设置里有两行，抽出来也顺便保证两行与同页官方条目同款。
+     */
+    function ToggleRow(props) {
+      const { title, desc, checked, label, onLabel, offLabel, onChange } = props;
+      const fallbackToggle = h('button', {
+        key: 'toggle',
+        type: 'button',
+        role: 'switch',
+        'aria-checked': checked,
+        'aria-label': label,
+        title: checked ? offLabel : onLabel,
+        onClick: () => onChange(!checked),
+        style: {
+          flex: 'none', cursor: 'pointer', borderRadius: '4096px',
+          width: '38px', height: '22px', padding: '2px', boxSizing: 'border-box',
+          display: 'flex', alignItems: 'center',
+          justifyContent: checked ? 'flex-end' : 'flex-start',
+          background: checked ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-bg-layer-2)',
+          border: '1px solid var(--dsw-alias-border-l1)',
+          transition: 'background .2s',
+        },
+      }, h('span', {
+        style: {
+          width: '16px', height: '16px', borderRadius: '50%', display: 'block',
+          background: checked ? 'var(--dsw-alias-bg-base)' : 'var(--dsw-alias-label-tertiary)',
+        },
+      }));
+      return h('div', {
+        style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', minWidth: 0 },
+      }, [
+        h('div', { key: 'text', style: { flex: '1 1 auto', minWidth: 0 } }, [
+          h('div', {
+            key: 'title',
+            style: { fontSize: '14px', lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' },
+          }, title),
+          h('div', {
+            key: 'desc',
+            style: { fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' },
+          }, desc),
+        ]),
+        Switch
+          ? h(Switch, {
+            key: 'toggle',
+            checked,
+            label,
+            title: checked ? offLabel : onLabel,
+            onChange,
+          })
+          : fallbackToggle,
+      ]);
+    }
+
     function SettingsRow(props) {
       const t = props.t;
       const on = useEnabled();
+      const auto = useAutoReveal();
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
-        h('div', {
+        h(ToggleRow, {
           key: 'main',
-          style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', minWidth: 0 },
-        }, [
-          h('div', { key: 'text', style: { flex: '1 1 auto', minWidth: 0 } }, [
-            h('div', {
-              key: 'title',
-              style: { fontSize: '14px', lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' },
-            }, t('settings.title')),
-            h('div', {
-              key: 'desc',
-              style: { fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' },
-            }, t('settings.desc')),
-          ]),
-          Switch
-            ? h(Switch, {
-              key: 'toggle',
-              checked: on,
-              label: t('settings.toggle'),
-              title: on ? t('settings.off') : t('settings.on'),
-              onChange: (next) => setEnabled(next),
-            })
-            : h('button', {
-              key: 'toggle',
-              type: 'button',
-              role: 'switch',
-              'aria-checked': on,
-              'aria-label': t('settings.toggle'),
-              title: on ? t('settings.off') : t('settings.on'),
-              onClick: () => setEnabled(!on),
-              style: {
-                flex: 'none', cursor: 'pointer', borderRadius: '4096px',
-                width: '38px', height: '22px', padding: '2px', boxSizing: 'border-box',
-                display: 'flex', alignItems: 'center',
-                justifyContent: on ? 'flex-end' : 'flex-start',
-                background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-bg-layer-2)',
-                border: '1px solid var(--dsw-alias-border-l1)',
-                transition: 'background .2s',
-              },
-            }, h('span', {
-              style: {
-                width: '16px', height: '16px', borderRadius: '50%', display: 'block',
-                background: on ? 'var(--dsw-alias-bg-base)' : 'var(--dsw-alias-label-tertiary)',
-              },
-            })),
-        ]),
+          title: t('settings.title'),
+          desc: t('settings.desc'),
+          checked: on,
+          label: t('settings.toggle'),
+          onLabel: t('settings.on'),
+          offLabel: t('settings.off'),
+          onChange: (next) => setEnabled(next),
+        }),
+        h(ToggleRow, {
+          key: 'auto-reveal',
+          title: t('settings.autoReveal.title'),
+          desc: t('settings.autoReveal.desc'),
+          checked: auto,
+          label: t('settings.autoReveal.toggle'),
+          onLabel: t('settings.autoReveal.on'),
+          offLabel: t('settings.autoReveal.off'),
+          onChange: (next) => setAutoReveal(next),
+        }),
         h(UpdateRow, { key: 'update', t }),
       ]);
     }

@@ -159,6 +159,8 @@ const sandbox = {
   console,
   document: { baseURI: 'http://localhost/' },
   requestAnimationFrame: (fn) => { rafQueue.push(fn); return rafQueue.length; },
+  /* 自动展开走的是官方 useSearchableHidden 的 beforematch 揭示通道，沙箱里要有 Event。 */
+  Event: class Event { constructor(type) { this.type = String(type); } },
 };
 vm.createContext(sandbox);
 vm.runInContext(clientSrc, sandbox, { filename: 'client.js' });
@@ -180,14 +182,24 @@ function makeFakeElement(init = {}) {
     ownerDocument: { activeElement: null },
     setAttribute(k, v) { this.attrs[k] = v; },
     removeAttribute(k) { delete this.attrs[k]; },
+    hasAttribute(k) { return k in this.attrs; },
     addEventListener(k, fn) { (this.listeners[k] ||= []).push(fn); },
     removeEventListener(k, fn) { this.listeners[k] = (this.listeners[k] || []).filter((f) => f !== fn); },
     contains() { return false; },
+    /* 默认「不在任何过程组里」；自动展开的测试会覆写这两个方法挂一棵假 DOM 树。 */
+    closest() { return null; },
+    querySelector() { return null; },
+    dispatchEvent(event) { (this.dispatched ||= []).push(event?.type); return true; },
   };
 }
 /** 可控的 requestAnimationFrame：手动 flush，模拟「scroll 事件先于下一帧」的时序。 */
 const rafQueue = [];
 const flushRaf = () => { const q = rafQueue.splice(0); for (const fn of q) fn(); };
+/**
+ * 自动展开过程组的测试要往组件里塞一棵可控的假 DOM 树（面板 → 组体 → 组头）。
+ * 非 null 时，React.useRef(null) 会把它当成「真实挂载后的 DOM 节点」返回。
+ */
+let fakeRoot = null;
 
 class ReactComponent {
   constructor(props) { this.props = props ?? {}; this.state = {}; }
@@ -206,8 +218,9 @@ const React = {
   useEffect(fn) { return fn(); },
   useMemo(fn) { return fn(); },
   useCallback(fn) { return fn; },
-  // null 初始化的 ref 给一个假 DOM 元素；其余（true/false）原样返回
-  useRef(init) { return { current: init === null ? makeFakeElement() : init }; },
+  // null 初始化的 ref 给一个假 DOM 元素（可用 fakeRoot 注入测试用的 DOM 树）；
+  // 其余（true/false）原样返回
+  useRef(init) { return { current: init === null ? (fakeRoot ?? makeFakeElement()) : init }; },
 };
 const primitives = {
   MarkdownText: function MarkdownText(p) { return React.createElement('markdown', p); },
@@ -610,6 +623,101 @@ const baseProps = (over = {}) => ({
   check('不再渲染白底白字的文字按钮', !flat.includes('aria-pressed'));
 }
 
+/* --- 自动展开过程组 ---------------------------------------------------- */
+/**
+ * 造一棵假 DOM：
+ *   面板 ── closest('[data-step-process-body]') ──▶ 组体
+ *   组体 ── closest('[data-step-process]')      ──▶ 组根
+ *   组根 ── querySelector('button[aria-controls]') ▶ 组头
+ */
+function makeProcessGroupDom({ hidden }) {
+  const head = { clicks: 0, click() { this.clicks += 1; } };
+  const root = makeFakeElement();
+  root.querySelector = (sel) => (sel === 'button[aria-controls]' ? head : null);
+  const body = makeFakeElement();
+  if (hidden) body.setAttribute('hidden', 'until-found');
+  body.closest = (sel) => (sel === '[data-step-process]' ? root : null);
+  const panel = makeFakeElement();
+  panel.closest = (sel) => (sel === '[data-step-process-body]' ? body : null);
+  return { panel, body, root, head, clicks: () => head.clicks };
+}
+
+check('自动展开走官方 beforematch 揭示通道（不直接动 DOM）',
+  /dispatchEvent\(new Event\('beforematch'\)\)/.test(clientSrc));
+
+const settingsFlat = flatten(render(settingsReg.component()));
+const switches = settingsFlat.filter((n) => n.type === 'switch');
+check('设置行渲染两个开关（总开关 + 自动展开）', switches.length === 2, `got ${switches.length}`);
+check('自动展开过程组默认打开', switches[1]?.props?.checked === true);
+check('自动展开开关带无障碍 label',
+  typeof switches[1]?.props?.label === 'string' && switches[1].props.label.length > 0);
+check('自动展开开关的 onChange 是函数', typeof switches[1]?.props?.onChange === 'function');
+
+/**
+ * 正在生成、且 reasoning 是**最后一块**（= 流式尾部）的节点 —— 只有这时面板才是 running。
+ * ⚠️ 这里踩过坑：直接用 baseProps()（reasoning + text 两块）时 reasoning 不是尾块，
+ * 面板 running 为 false，自动展开压根不会触发，断言会**假通过**。
+ */
+const runningProps = () => baseProps({
+  node: {
+    key: 'assistant-step:1:1',
+    data: { status: 'running', turn: 1, step: 1, blocks: [{ kind: 'reasoning', text: '正在想……' }] },
+    location: { kind: 'step', turn: { status: 'open' } },
+  },
+});
+
+{
+  // (a) 运行中 + 组体收起 → 派发 beforematch；官方通道一帧后仍没收起就退回点击组头
+  const dom = makeProcessGroupDom({ hidden: true });
+  fakeRoot = dom.panel;
+  render(React.createElement(nodeReg.component, runningProps()));
+  fakeRoot = null;
+  check('自动展开：对收起的组体派发 beforematch',
+    dom.body.dispatched?.includes('beforematch') === true,
+    `dispatched=${JSON.stringify(dom.body.dispatched ?? [])}`);
+  flushRaf();
+  check('自动展开：官方通道无效时退回点击组头', dom.clicks() === 1, `clicks=${dom.clicks()}`);
+}
+{
+  // (b) 组本来就是展开的（详细 / 完全展开模式）→ 不动作
+  const dom = makeProcessGroupDom({ hidden: false });
+  fakeRoot = dom.panel;
+  render(React.createElement(nodeReg.component, runningProps()));
+  fakeRoot = null;
+  flushRaf();
+  check('组已展开时不动作', (dom.body.dispatched?.length ?? 0) === 0 && dom.clicks() === 0);
+}
+{
+  // (c) 已结束的轮次 → 不动作（那是 DSH 自己的收起规则，四种模式一致）
+  const dom = makeProcessGroupDom({ hidden: true });
+  fakeRoot = dom.panel;
+  render(React.createElement(nodeReg.component, baseProps({
+    node: {
+      key: 'assistant-step:1:2',
+      data: { status: 'settled', turn: 1, step: 2, blocks: [{ kind: 'reasoning', text: '已经想完了。' }] },
+      location: { kind: 'step', turn: { status: 'closed' } },
+    },
+  })));
+  fakeRoot = null;
+  flushRaf();
+  check('已结束的轮次不自动展开', (dom.body.dispatched?.length ?? 0) === 0 && dom.clicks() === 0);
+}
+{
+  // (d) 开关关掉 → 不动作，并且落盘
+  switches[1]?.props?.onChange(false);
+  check('关掉自动展开会写入 localStorage',
+    sandbox.window.localStorage.getItem('dsh-thinking-panel.auto-reveal-process') === 'false');
+  const dom = makeProcessGroupDom({ hidden: true });
+  fakeRoot = dom.panel;
+  render(React.createElement(nodeReg.component, runningProps()));
+  fakeRoot = null;
+  flushRaf();
+  check('关掉自动展开后不再插手过程组', (dom.body.dispatched?.length ?? 0) === 0 && dom.clicks() === 0);
+  switches[1]?.props?.onChange(true);   // 复原，别污染后续断言
+  check('重新打开会写回 true',
+    sandbox.window.localStorage.getItem('dsh-thinking-panel.auto-reveal-process') === 'true');
+}
+
 /* ================================================================== *
  * 3. 规格交叉比对（回查 DSH 出厂源码）
  * ================================================================== */
@@ -652,6 +760,18 @@ specCatalog('槽目录确认 assistant-step 已被占位', !!catalog
   && /client-ui-chat AssistantNodeView key 'assistant-step'/.test(catalog));
 specCatalog('槽目录确认 replaceRisk = shadows-shipped-ui', !!catalog
   && /replaceRisk: "shadows-shipped-ui"/.test(catalog));
+
+/* 「自动展开过程组」的依据 —— 全部回查出厂源码，不是推测 */
+spec('出厂 useSearchableHidden 用 beforematch 做揭示通道', !!uiChat
+  && /addEventListener\("beforematch", reveal\)/.test(uiChat));
+spec('出厂过程组折叠时给组体设 hidden="until-found"', !!uiChat
+  && /setAttribute\("hidden", "until-found"\)/.test(uiChat));
+spec('出厂过程组按 stepGrouping 决定是否折叠', !!uiChat
+  && /policy\.stepGrouping === "collapsed" \|\| policy\.stepGrouping === "history"/.test(uiChat));
+spec('出厂桌面端默认「工作步骤展示」是 standard', !!uiChat
+  && /"dshDesktop" in globalThis \? "standard"/.test(uiChat));
+spec('出厂推理行属于过程组（processMember）', !!uiChat
+  && /groupPart === "reasoning" && routedNode\.kind === "assistant-step"/.test(uiChat));
 
 for (const tok of [
   '--dsw-alias-label-dimmed',

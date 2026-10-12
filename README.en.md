@@ -10,7 +10,7 @@ Ask in Chinese, think in Chinese; watch a multi-line scrolling preview while it 
 
 ## What it solves
 
-DSH's shipped thinking chain differs from the official client in four ways:
+DSH's shipped thinking chain differs from the official client in five ways:
 
 | | Shipped behaviour | With this plugin |
 |---|---|---|
@@ -18,23 +18,27 @@ DSH's shipped thinking chain differs from the official client in four ways:
 | **Preview while thinking** | The collapsed state is a **structural single line** (`contain:size` + `nowrap`) — you get one summary line | The **full reasoning text** in a 5-line scrolling preview, auto-following the newest content |
 | **Expanding** | No height constraint; long reasoning means scrolling the whole page | A height-capped container with its own **draggable scrollbar** |
 | **Details** | No left rail, no duration title | Rail, brand-coloured icon, `Thinking` / `Thought for Xs` — all matched |
+| **Visibility** | Desktop defaults to "Standard": the running process folds into a "process group" — **you have to open it first** | The process group is **auto-expanded** while a turn runs (can be switched off) |
 
 ## Honest limitations first
 
 ### Can't see the thinking chain?
 
-DSH **defaults to "Standard" on desktop**: the process you are currently running is folded into a
-"process group", and this plugin's panel lives inside that group — so you have to **open the process
-group first** (and click once more for the full text). That is why a fresh install can look like it
-did nothing.
+**Read this first: since 0.1.1 it is auto-expanded — it works out of the box.** The background: DSH on
+desktop defaults to "Standard", which folds the running process into a "process group", and this
+plugin's panel lives inside that group — so shipped behaviour requires you to **open the process group
+first** (and click once more for the full text).
 
-To have it **visible by default**, like the animations above, set
-**Settings → General → Work details** to **Detailed**: while a turn is running, that is the only
-difference from Standard (settled turns are folded in all four modes — that is DSH's own design).
+The plugin now expands it for you **while a turn is running**, through DSH's own reveal channel
+(`beforematch` on the group body → `setOpen(true)`): it does not steal focus, does not touch the DOM
+directly and does not bypass React's state machine. Only if that channel ever breaks does it fall back
+to clicking the group header — and restoring focus afterwards. The switch lives in
+**Settings → General → Thinking Panel → Auto-expand the process group** and is **on by default**.
 
-This is not a bug the plugin can fix: the panel is a member of the shipped process group, and whether
-that group is open is decided by DSH's own process-group renderer. Changing that would mean rewriting
-the shipped process group, so we document it instead.
+Turn it off and the old behaviour returns; then set
+**Settings → General → Work details** to **Detailed** — while a turn is running, that is the only
+difference from Standard. (Settled turns are folded in all four modes; that is DSH's own design and the
+plugin does not rewrite it.)
 
 **Language following is a prompt-level constraint and is effectively useless in heavy agent sessions.**
 Clean short conversations measured CJK 0.399–0.607 (control group 0.000), but an agent session stuffed with
@@ -113,7 +117,7 @@ Please do this in order:
 ```powershell
 & $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel'
 # pin a version:
-& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.1.0'
+& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.1.1'
 ```
 
 > Requires `git`. Installs the latest commit on the default branch — no version semantics;
@@ -278,7 +282,7 @@ match**. Only `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` are checked, using
 - **Bugs and feature requests**: [open an issue](https://github.com/Fo-Rimuru/dsh-thinking-panel/issues).
   The bug template asks for your DSH version, console output and a few self-checks — those save
   several rounds of back-and-forth.
-- **Pull requests** are welcome. Please run `node tools/verify.mjs` first and keep all 149 checks green.
+- **Pull requests** are welcome. Please run `node tools/verify.mjs` first and keep all 161 checks green (184 with a DSH source copy).
 - Please skim [Known limitations](#known-limitations) before filing — things like "language following
   does nothing in heavy agent sessions" are known inherent limits, not bugs.
 
@@ -286,11 +290,11 @@ match**. Only `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` are checked, using
 
 ```powershell
 node tools/verify.mjs
-#   without DSH source → 149 passed, 0 failed, 18 skipped
-#   with DSH source    → 167 passed, 0 failed
+#   without DSH source → 161 passed, 0 failed, 23 skipped
+#   with DSH source    → 181 passed, 0 failed, 3 skipped
 ```
 
-The 18 skipped ones cross-check the plugin against DSH's shipped source; supply an unpacked copy via
+The 23 skipped ones cross-check the plugin against DSH's shipped source; supply an unpacked copy via
 `DSH_SRC_DIR` (and `DSH_SLOT_CATALOG` for three slot-semantics checks) to run them. Missing material
 is reported as **SKIP** — never as a pass, and never as a failure.
 

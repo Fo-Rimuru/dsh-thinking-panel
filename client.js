@@ -793,6 +793,13 @@ window.__ModuleLoader__.load({
      * 端点不可用时整块**静默隐藏** —— 自更新不该成为插件能否使用的前提。
      * ================================================================== */
     const UPDATE_ROUTE = '/dsh-thinking-panel/update';
+    /**
+     * 只有它是只读的：Host 侧对 `check / install / rollback / auto-update` 一律要求 POST
+     * （变更类方法），只有 `status` 走 GET。
+     * ⚠️ 这里踩过坑：早先客户端按「有没有传 body」决定 GET/POST，于是 `check`
+     * （变更类、但不需要参数）被发成 GET，点「检查更新」直接 HTTP 405。
+     */
+    const UPDATE_READONLY = new Set(['status']);
 
     function UpdateRow(props) {
       const t = props.t;
@@ -801,12 +808,13 @@ window.__ModuleLoader__.load({
       const [note, setNote] = React.useState(null);
 
       const call = React.useCallback(async (method, body) => {
-        const res = await fetch(`${UPDATE_ROUTE}/${method}`, body === undefined
+        const readonly = UPDATE_READONLY.has(method) && body === undefined;
+        const res = await fetch(`${UPDATE_ROUTE}/${method}`, readonly
           ? { method: 'GET' }
           : {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify(body ?? {}),
           });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();

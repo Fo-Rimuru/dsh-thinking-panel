@@ -801,6 +801,16 @@ check('路由前缀与 Client 侧一致',
 check('端点复用 DSH 的鉴权边界',
   /webCtx\.connection\.requestRejection\(req\)/.test(indexSrc));
 check('变更类方法要求 POST', /const MUTATING = new Set\(\['check', 'install', 'rollback', 'auto-update'\]\)/.test(indexSrc));
+/* 回归：check 不需要参数，而早先客户端按「有没有传 body」决定 GET/POST，把它发成 GET，
+ * 而 Host 侧 check 属于变更类、一律要求 POST —— 点「检查更新」直接 HTTP 405。 */
+check('自更新客户端：只有 status 是只读方法',
+  /const UPDATE_READONLY = new Set\(\['status'\]\)/.test(clientSrc)
+  && /const readonly = UPDATE_READONLY\.has\(method\)/.test(clientSrc));
+check('自更新客户端：变更类方法带空 JSON body 发 POST',
+  /body: JSON\.stringify\(body \?\? \{\}\)/.test(clientSrc));
+check('两端方法策略不相交（status 只读，其余变更）',
+  !/MUTATING = new Set\(\[[^\]]*'status'/.test(indexSrc));
+check('路线图文档存在（0.2.0 待办）', fs.existsSync(path.join(pkgDir, 'docs', 'ROADMAP.md')));
 check('自更新按需注入 webServer（缺了也不影响插件本身）',
   /ctx\.inject\(\['connection', 'webServer'\]/.test(indexSrc));
 check('Client 侧端点不可用时静默隐藏（不阻断插件）',

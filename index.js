@@ -151,6 +151,12 @@ function compatReport(problem, detail) {
 export function apply(ctx, config) {
   const rawMode = config && typeof config.mode === 'string' ? config.mode : 'auto';
   const mode = MODES.includes(rawMode) ? rawMode : 'auto';
+
+  /* 自更新端点与语言注入**完全独立**：即使用户把 mode 设成 off（只想关掉注入），
+   * 也照样要注册。⚠️ 早先这一句写在函数末尾、且在 off 短路（text === null）之后 ——
+   * 于是 mode=off 的用户会发现 /update/status 变成 404，整个自更新面板凭空消失。 */
+  registerUpdateRoutes(ctx);
+
   const text = reasoningLanguageRule(mode);
   if (text === null) return;
 
@@ -196,8 +202,7 @@ export function apply(ctx, config) {
     );
   }
 
-  // ③ 自更新端点（可选：没有 webServer 就静默跳过，不影响上面的功能）
-  registerUpdateRoutes(ctx);
+  // 自更新端点已在函数开头注册（见那里的说明）
 }
 
 /* ================================================================== *

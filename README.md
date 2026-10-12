@@ -470,8 +470,8 @@ DSH 升级后最常见的是**被兼容性闸门拦下**（见上一节的 `peer
 
 - **遇到问题 / 想要新功能**：[开一个 Issue](https://github.com/Fo-Rimuru/dsh-thinking-panel/issues)
   —— Bug 模板会引导你填 DSH 版本、控制台输出和几条自查项，这几项能省掉好几轮来回
-- **Pull Request**：欢迎。改完请先跑 `node tools/verify.mjs`（见下），确保 165 项通过
-  （准备了出厂源码副本则是 188 项）
+- **Pull Request**：欢迎。改完请先跑 `node tools/verify.mjs`（见下），确保 174 项通过
+  （准备了出厂源码副本则是 197 项）
 - **提问也是 Issue**：选 Bug 模板即可，问题可搜索、可追溯，别人遇到同样情况能直接搜到
 - **已排期但还没做的改动**：见 [`docs/ROADMAP.md`](docs/ROADMAP.md)（0.2.0 待办：注入开关、
   自动更新开关、一键回退入口、设置独立成一栏）
@@ -482,14 +482,14 @@ DSH 升级后最常见的是**被兼容性闸门拦下**（见上一节的 `peer
 ## 自检
 
 ```powershell
-# 188 项契约自检：Host 半部的 PromptSection 契约与四种 mode；Client 半部的模块注册、
+# 197 项契约自检：Host 半部的 PromptSection 契约与四种 mode；Client 半部的模块注册、
 # locale、三个 slot 条目、<style> 内容；并真实渲染 assistant-step 组件树
 # （分组过滤 / tool-call / 图片合并 / 错误边界 / 滚动跟随 / 空 blocks / 官方 Switch /
 #   自动展开过程组：beforematch 通道、焦点兜底、已结束轮次不插手、开关默认打开）
 node tools\verify.mjs
-#   无出厂源码时 → 165 passed, 0 failed, 23 skipped
-#   有出厂源码时 → 185 passed, 0 failed, 3 skipped
-#   再提供槽目录 → 188 passed, 0 failed
+#   无出厂源码时 → 174 passed, 0 failed, 23 skipped
+#   有出厂源码时 → 194 passed, 0 failed, 3 skipped
+#   再提供槽目录 → 197 passed, 0 failed
 ```
 
 其中 23 项是「回查 DSH 出厂源码」的交叉比对，需要你自己准备一份解包副本才会执行：
@@ -513,7 +513,7 @@ node tools\test-self-update.mjs
 ```
 
 CI 也会跑这两项（[`.github/workflows/verify.yml`](.github/workflows/verify.yml)），
-所以每次 push 都会看到那 165 项（无出厂源码时）是否通过。
+所以每次 push 都会看到那 174 项（无出厂源码时）是否通过。
 
 ## 卸载
 

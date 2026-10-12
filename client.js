@@ -203,6 +203,9 @@ window.__ModuleLoader__.load({
 .dst-think-body::-webkit-scrollbar-thumb:hover{
   background:var(--dsw-alias-label-tertiary,var(--dsw-alias-border-l2));
   background-clip:padding-box}
+/* 与出厂 AssistantMarkdown.module.css 的 .stopped 同款：被中断的轮次挂一个小徽标 */
+.dst-stopped{border-radius:var(--dsw-radius-s,4px);background:var(--dsw-alias-interactive-bg-hover);
+  color:var(--dsw-alias-label-tertiary);align-self:flex-start;padding:0 6px;font-size:11px;line-height:18px}
 .dst-plain{color:var(--dsw-alias-label-primary)}
 .dst-plain-reasoning{margin:4px 0;color:var(--dsw-alias-label-secondary);
   font:var(--dsw-font-markdown-small);white-space:pre-wrap;max-height:6.5em;overflow:hidden}
@@ -311,34 +314,26 @@ window.__ModuleLoader__.load({
     }
 
     /* ================================================================== *
-     * 思考耗时：模块级记录，按 node key 记账（组件重挂载不丢）
+     * 思考耗时：直接用出厂自己记的时间戳
+     *
+     * ⚠️ 这里换过一次实现。早先是模块级 Map 按 node key 自己记账（挂载开表、结算收表），
+     * 但 node key 只在**会话内**唯一（出厂就是 `"${turn}:${step}"`），于是两个会话的
+     * `1:1` 会共用一条记录：后一个会话要么显示前一个会话的耗时，要么因为记录已结算
+     * 而整轮都不重新计时。那套还有两个毛病 —— 在 render 期间写外部状态、以及需要 LRU 淘汰。
+     *
+     * 现在读出厂结算数据：`node.data.finalNode.timing = { stepStartTime, firstTokenTime,
+     * completedTime }`（毫秒），耗时 = completedTime - stepStartTime。
+     * 不需要任何跨渲染状态。思考中也不吃亏：那时标题本来就不显示秒数。
      * ================================================================== */
-    const timings = new Map(); // key -> { start?: number; ms?: number }
-    /**
-     * 记账表的上限。每个条目很小，但页面开着好几天、步骤成千上万时仍会慢慢涨，
-     * 所以超过上限就按**插入顺序**（Map 保证）丢掉最早的那批。
-     */
-    const TIMINGS_MAX = 500;
-    function noteRunning(key) {
-      const rec = timings.get(key);
-      if (rec !== undefined && rec.start !== undefined) return;
-      if (timings.size >= TIMINGS_MAX) {
-        let drop = timings.size - TIMINGS_MAX + 1;
-        for (const old of timings.keys()) {
-          timings.delete(old);
-          if (--drop <= 0) break;
-        }
-      }
-      timings.set(key, { start: Date.now() });
-    }
-    function noteSettled(key) {
-      const rec = timings.get(key);
-      if (rec === undefined || rec.start === undefined || rec.ms !== undefined) return;
-      rec.ms = Date.now() - rec.start;
-    }
-    function durationOf(key) {
-      const rec = timings.get(key);
-      return rec && rec.ms !== undefined ? Math.max(1, Math.round(rec.ms / 1000)) : null;
+    function durationOf(node) {
+      const data = (node && node.data) || {};
+      const timing = (data.finalNode && data.finalNode.timing) || data.timing || null;
+      if (!timing) return null;
+      const { stepStartTime, completedTime } = timing;
+      if (typeof stepStartTime !== 'number' || typeof completedTime !== 'number') return null;
+      const ms = completedTime - stepStartTime;
+      if (!Number.isFinite(ms) || ms <= 0) return null;
+      return Math.max(1, Math.round(ms / 1000));
     }
 
     /* ================================================================== *
@@ -446,7 +441,7 @@ window.__ModuleLoader__.load({
      * 思考面板
      * ================================================================== */
     function ThinkingPanel(props) {
-      const { text, running, useDisclosure, t } = props;
+      const { text, running, stopped, useDisclosure, t } = props;
       const tr = typeof t === 'function' ? t : (k) => k;
       /* 展开状态优先用注入的 useDisclosure（与出厂一致，跟随 Turn 重置）；
        * 未注入时退回自带 useState，保证仍可展开。 */
@@ -468,8 +463,31 @@ window.__ModuleLoader__.load({
       const autoReveal = useAutoReveal();
       const revealed = React.useRef(false);
       React.useEffect(() => {
-        if (!autoReveal || !running || revealed.current) return;
-        if (revealProcessGroup(rootRef.current)) revealed.current = true;
+        if (!autoReveal || !running || revealed.current) return undefined;
+        const el = rootRef.current;
+        // 非真实 DOM（自检的 mock 环境、降级路径）：没有可探测的祖先，直接放弃。
+        if (el === null || typeof el.closest !== 'function') return undefined;
+        if (revealProcessGroup(el)) { revealed.current = true; return undefined; }
+
+        /**
+         * ⚠️ 首次没成功必须重试。这个 effect 的依赖只有 [autoReveal, running]，而 running
+         * 在整个生成期间恒为 true —— 不重试就等于「这一轮彻底放弃」。真实会撞上的时序：
+         * 面板挂载那一刻，官方给组体打 hidden 的 layout effect 还没落到 DOM 上。
+         * 上限 8 次 × 250ms = 2 秒，够覆盖首帧时序，也不会一直骚扰 DOM。
+         */
+        // 非浏览器环境（自检沙箱等）没有 setTimeout：直接放弃，别抛。
+        if (typeof setTimeout !== 'function') return undefined;
+        let tries = 0;
+        let timer = 0;
+        const retry = () => {
+          timer = 0;
+          if (revealed.current) return;
+          if (revealProcessGroup(rootRef.current)) { revealed.current = true; return; }
+          if (++tries >= 8) return;
+          timer = setTimeout(retry, 250);
+        };
+        timer = setTimeout(retry, 250);
+        return () => { if (timer) clearTimeout(timer); };
       }, [autoReveal, running]);
       const [canScroll, setCanScroll] = React.useState(false);
       /**
@@ -532,9 +550,11 @@ window.__ModuleLoader__.load({
       const seconds = props.seconds;
       const title = running
         ? tr('think.running')
-        : (seconds !== null && seconds !== undefined
-          ? tr('think.done') + tr('think.seconds', { s: seconds })
-          : tr('think.done'));
+        : stopped
+          ? tr('think.stopped')
+          : (seconds !== null && seconds !== undefined
+            ? tr('think.done') + tr('think.seconds', { s: seconds })
+            : tr('think.done'));
 
       const head = h('div', {
         className: 'dst-think-head',
@@ -578,7 +598,7 @@ window.__ModuleLoader__.load({
         className: 'dst-think',
         'data-collapsed': expanded ? undefined : true,
         'data-variant': 'think',
-        'data-state': running ? 'running' : 'ok',
+        'data-state': running ? 'running' : (stopped ? 'stopped' : 'ok'),
       }, [head, body]);
     }
 
@@ -596,15 +616,15 @@ window.__ModuleLoader__.load({
       const data = (node && node.data) || {};
       const blocks = Array.isArray(data.blocks) ? data.blocks : [];
       const running = data.status === 'running';
-      /* 记账 key：优先用节点自己的 key；退回 turn:step。
-       * ⚠️ 两者都缺失时不能再拼成 "undefined:undefined" —— 那会让所有步骤共用一个
-       * key、耗时互相污染，所以这里落到一个固定哨兵值。 */
-      const key = (node && node.key)
-        || (data.turn !== undefined || data.step !== undefined ? `${data.turn}:${data.step}` : 'unknown-step');
+      /**
+       * 被中断的轮次。出厂把它当独立状态（`data.status === 'interrupted'`），并在正文后面
+       * 挂一个「已停止」小徽标；插件早先只判 running，于是中断被当成正常结束、
+       * 显示「已思考（用时 N 秒）」—— 语义错了，`think.stopped` 也成了死代码。
+       */
+      const interrupted = data.status === 'interrupted';
 
-      // 耗时记账
-      if (running) noteRunning(key); else noteSettled(key);
-      const seconds = durationOf(key);
+      // 耗时：直接读出厂结算数据，不再自己记账（见 durationOf 的说明）
+      const seconds = durationOf(node);
 
       // 推理行的隐藏/揭示（turnProcess 折叠）
       const reasoningHidden = turnProcess !== undefined && turnProcess.foldable
@@ -632,7 +652,6 @@ window.__ModuleLoader__.load({
         },
       }), []);
 
-      const last = blocks.length - 1;
       const out = [];
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
@@ -651,10 +670,17 @@ window.__ModuleLoader__.load({
         }
 
         if (block.kind === 'reasoning') {
+          /**
+           * 是否流式尾部。⚠️ 不能用 `i === blocks.length - 1`：末块是图片时，真正的
+           * reasoning 块 i < last，会被误判成「已经想完了」—— 流式期间标题就显示成
+           * 「已思考」而不是「深度思考中」。正确判据是「它后面再没有正文块」。
+           */
+          const tail = !blocks.slice(i + 1).some((b) => b && (b.kind === 'text' || b.kind === 'reasoning'));
           const panel = on
             ? h(ThinkingPanel, {
               text: block.text,
-              running: running && i === last,
+              running: running && tail,
+              stopped: interrupted,
               seconds,
               useDisclosure,
               t: tr,
@@ -693,7 +719,13 @@ window.__ModuleLoader__.load({
       }
 
       if (out.length === 0) return null;
-      return h(ThinkingBoundary, { blocks }, h(React.Fragment, null, out));
+      /* 与出厂同构：只有「非 reasoning 分组」的那一份才挂「已停止」徽标，
+       * 否则同一个节点会在过程组内外各显示一次。 */
+      const stoppedBadge = interrupted && (groupPart === undefined || groupPart === 'response')
+        ? h('span', { key: 'stopped', className: 'dst-stopped' }, tr('think.stopped'))
+        : null;
+      return h(ThinkingBoundary, { blocks },
+        h(React.Fragment, null, stoppedBadge === null ? out : out.concat([stoppedBadge])));
     }
 
     /* ================================================================== *
@@ -830,11 +862,24 @@ window.__ModuleLoader__.load({
 
       if (state === null) return null;
 
+      /**
+       * 卸载保护 + 重入守卫。两个都踩过：
+       *  ① `await` 之后 setState 落在已卸载组件上；
+       *  ② `disabled` 要等重渲染才生效，快速双击能并发两次 install ——
+       *     而 install 是会**写文件系统**的操作（Host 侧另有一道互斥兜底）。
+       */
+      const alive = React.useRef(true);
+      React.useEffect(() => () => { alive.current = false; }, []);
+      const inFlight = React.useRef(false);
+
       const run = async (method, body) => {
+        if (inFlight.current) return;
+        inFlight.current = true;
         setBusy(method);
         setNote(null);
         try {
           const result = await call(method, body);
+          if (!alive.current) return;
           if (result && result.ok) {
             if (method === 'check') {
               setNote(result.hasUpdate
@@ -848,14 +893,21 @@ window.__ModuleLoader__.load({
                   : t('update.installed', { v: result.version }),
               });
             }
-            setState(await call('status'));
+            /* 刷新状态单独兜住：它失败不该把刚显示的「已更新到 vX」覆盖成错误文案。 */
+            try {
+              const next = await call('status');
+              if (alive.current) setState(next);
+            } catch { /* 状态没刷上不影响本次结果 */ }
           } else {
             setNote({ kind: 'error', text: (result && result.error) || t('update.failed') });
           }
         } catch (error) {
-          setNote({ kind: 'error', text: String(error && error.message ? error.message : error) });
+          if (alive.current) {
+            setNote({ kind: 'error', text: String(error && error.message ? error.message : error) });
+          }
         } finally {
-          setBusy('');
+          inFlight.current = false;
+          if (alive.current) setBusy('');
         }
       };
 

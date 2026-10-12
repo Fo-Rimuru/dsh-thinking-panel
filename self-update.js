@@ -324,20 +324,54 @@ export function createSelfUpdater(options) {
     } catch (error) { log(`状态写入失败：${error.message}`); }
   }
 
+  /**
+   * 同一时刻只允许一个会写文件系统（或状态文件）的操作。
+   *
+   * 为什么需要：桌面端与 Web GUI 是两条彼此独立的客户端，可以同时开着同一个插件目录 ——
+   * 两边同时点「更新」时 `applyPayload` 会交错执行（备份目录被前一个删掉、文件写一半）。
+   * 客户端那层的 `disabled` 只能挡住同一个页面里的双击，挡不住第二个窗口。
+   */
+  let busy = null;
+  async function locked(label, fn) {
+    if (busy !== null) return { ok: false, error: `另一个更新操作正在进行（${busy}），请稍后重试` };
+    busy = label;
+    try { return await fn(); } finally { busy = null; }
+  }
+
   async function fetchWithLimit(url) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const tooBig = () => new Error(`响应超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`);
     try {
       const res = await fetchImpl(url, { signal: controller.signal, redirect: 'follow' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      /* ⚠️ 不能先 arrayBuffer() 再判大小 —— 那等于把整个响应读进内存之后才拦，上限形同虚设。
+       * 这里流式累计，一超限就取消读取。 */
+      if (res.body && typeof res.body.getReader === 'function') {
+        const reader = res.body.getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > maxBytes) {
+            try { await reader.cancel(); } catch { /* ignore */ }
+            throw tooBig();
+          }
+          chunks.push(Buffer.from(value));
+        }
+        return Buffer.concat(chunks, total);
+      }
+      // 没有流式 body（旧运行时或测试替身）：退回一次性读取，但仍然判大小。
       const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > maxBytes) throw new Error(`响应超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`);
+      if (buf.length > maxBytes) throw tooBig();
       return buf;
     } finally { clearTimeout(timer); }
   }
 
   /** 查询 npm registry 上的最新版本。 */
-  async function check() {
+  async function checkImpl() {
     try {
       const buf = await fetchWithLimit(REGISTRY_LATEST_URL);
       const meta = JSON.parse(buf.toString('utf8'));
@@ -364,7 +398,7 @@ export function createSelfUpdater(options) {
   }
 
   /** 下载并应用指定版本（默认最新版）。 */
-  async function install(version) {
+  async function installImpl(version) {
     const target = typeof version === 'string' && version.length > 0 ? version : state.latestVersion;
     if (!target) return { ok: false, error: '还没有已知的目标版本，请先检查更新' };
     if (compareSemver(runningVersion, target) >= 0) {
@@ -391,7 +425,7 @@ export function createSelfUpdater(options) {
   }
 
   /** 回滚到指定版本（默认「当前运行版本」），并把它记进 holdVersion。 */
-  async function rollback(version) {
+  async function rollbackImpl(version) {
     const target = typeof version === 'string' && version.length > 0 ? version : runningVersion;
     try {
       const tarball = await fetchWithLimit(tarballUrl(target));
@@ -433,5 +467,12 @@ export function createSelfUpdater(options) {
   }
 
   loadState();
-  return { check, install, rollback, setAutoUpdate, status };
+  return {
+    // check 也要上锁：它会写状态文件，与 install/rollback 交错会互相覆盖字段
+    check: () => locked('check', checkImpl),
+    install: (version) => locked('install', () => installImpl(version)),
+    rollback: (version) => locked('rollback', () => rollbackImpl(version)),
+    setAutoUpdate,
+    status,
+  };
 }

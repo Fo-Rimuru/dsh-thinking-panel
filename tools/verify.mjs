@@ -159,6 +159,9 @@ const sandbox = {
   console,
   document: { baseURI: 'http://localhost/' },
   requestAnimationFrame: (fn) => { rafQueue.push(fn); return rafQueue.length; },
+  /* 「首次失败要重试」的路径需要 setTimeout，但不能真拖住测试进程 → 收进队列手动 flush。 */
+  setTimeout: (fn) => { timerQueue.push(fn); return timerQueue.length; },
+  clearTimeout: () => {},
   /* 自动展开走的是官方 useSearchableHidden 的 beforematch 揭示通道，沙箱里要有 Event。 */
   Event: class Event { constructor(type) { this.type = String(type); } },
 };
@@ -195,6 +198,9 @@ function makeFakeElement(init = {}) {
 /** 可控的 requestAnimationFrame：手动 flush，模拟「scroll 事件先于下一帧」的时序。 */
 const rafQueue = [];
 const flushRaf = () => { const q = rafQueue.splice(0); for (const fn of q) fn(); };
+/** 可控的 setTimeout（同上：先收起来，由测试手动触发）。 */
+const timerQueue = [];
+const flushTimers = () => { const q = timerQueue.splice(0); for (const fn of q) fn(); };
 /**
  * 自动展开过程组的测试要往组件里塞一棵可控的假 DOM 树（面板 → 组体 → 组头）。
  * 非 null 时，React.useRef(null) 会把它当成「真实挂载后的 DOM 节点」返回。
@@ -571,15 +577,18 @@ const baseProps = (over = {}) => ({
   check('展开态与折叠态共用同一个滚动 ref', /ref: scrollRef,          \/\/ ★ 与折叠态共用/.test(clientSrc));
 }
 
-// (j2) 静态回归：耗时记账不会无限增长 / key 不会退化
+// (j2) 静态回归：耗时改为读出厂 timing，不再自己记账
 {
-  check('耗时记账表有上限（防长时间运行缓慢泄漏）', /const TIMINGS_MAX = \d+;/.test(clientSrc));
-  check('超限时按插入顺序淘汰最早的条目',
-    /if \(timings\.size >= TIMINGS_MAX\)/.test(clientSrc) && /for \(const old of timings\.keys\(\)\)/.test(clientSrc));
-  check('noteRunning 对已存在的 key 幂等（严格模式双调用安全）',
-    /if \(rec !== undefined && rec\.start !== undefined\) return;/.test(clientSrc));
-  check('key 不会退化成 "undefined:undefined"',
-    /'unknown-step'/.test(clientSrc) && !/\|\| `\$\{data\.turn\}:\$\{data\.step\}`;/.test(clientSrc));
+  // 回归：早先用模块级 Map 按 node key 记账，而 node key 只在**会话内**唯一
+  //（出厂就是 "${turn}:${step}"）→ 两个会话的 1:1 共用一条记录、耗时互相污染。
+  check('耗时读出厂结算数据（node.data.finalNode.timing）',
+    /data\.finalNode && data\.finalNode\.timing\) \|\| data\.timing/.test(clientSrc)
+    && /const ms = completedTime - stepStartTime;/.test(clientSrc));
+  check('不再自己记账（模块级计时 Map 与 noteRunning/noteSettled 都已移除）',
+    !/const timings = new Map\(\)/.test(clientSrc) && !/noteRunning|noteSettled/.test(clientSrc));
+  check('耗时对缺字段/非法值安全返回 null',
+    /typeof stepStartTime !== 'number' \|\| typeof completedTime !== 'number'/.test(clientSrc)
+    && /if \(!Number\.isFinite\(ms\) \|\| ms <= 0\) return null;/.test(clientSrc));
 }
 
 // (h) ui-primitives 不可用 → 纯文本降级
@@ -679,13 +688,21 @@ const runningProps = () => baseProps({
   check('自动展开：官方通道无效时退回点击组头', dom.clicks() === 1, `clicks=${dom.clicks()}`);
 }
 {
-  // (b) 组本来就是展开的（详细 / 完全展开模式）→ 不动作
+  // (b) 组本来就是展开的（详细 / 完全展开模式）→ 首次不动作
   const dom = makeProcessGroupDom({ hidden: false });
   fakeRoot = dom.panel;
   render(React.createElement(nodeReg.component, runningProps()));
   fakeRoot = null;
   flushRaf();
-  check('组已展开时不动作', (dom.body.dispatched?.length ?? 0) === 0 && dom.clicks() === 0);
+  check('组已展开时首次不动作', (dom.body.dispatched?.length ?? 0) === 0 && dom.clicks() === 0);
+
+  // (e) 回归：首次没成功必须重试 —— effect 依赖只有 [autoReveal, running]，
+  //     running 整个生成期间恒为 true，不重试就等于「这一轮彻底放弃」。
+  //     这里模拟「官方给组体打 hidden 晚了一帧」的真实时序。
+  dom.body.setAttribute('hidden', 'until-found');
+  flushTimers();
+  check('首次失败后会重试（官方晚一帧折叠也能展开）',
+    dom.body.dispatched?.includes('beforematch') === true);
 }
 {
   // (c) 已结束的轮次 → 不动作（那是 DSH 自己的收起规则，四种模式一致）
@@ -717,6 +734,30 @@ const runningProps = () => baseProps({
   check('重新打开会写回 true',
     sandbox.window.localStorage.getItem('dsh-thinking-panel.auto-reveal-process') === 'true');
 }
+
+/* --- 被中断的轮次 / 流式尾部 / 自更新面板守卫 ------------------------------ */
+{
+  const tree = render(React.createElement(nodeReg.component, baseProps({
+    node: {
+      key: 'assistant-step:1:3',
+      data: { status: 'interrupted', turn: 1, step: 3, blocks: [{ kind: 'reasoning', text: '被打断了。' }] },
+      location: { kind: 'step', turn: { status: 'closed' } },
+    },
+  })));
+  const nodes = flatten(tree);
+  const head = nodes.find((n) => n.props?.className === 'dst-think-head');
+  // 回归：出厂把 interrupted 当独立状态；早先只判 running，中断被当成正常结束
+  check('被中断时标题是「已停止」', JSON.stringify(head?.children ?? '').includes('已停止'),
+    JSON.stringify(head?.children ?? '').slice(0, 120));
+  check('被中断时挂出厂的「已停止」徽标', nodes.some((n) => n.props?.className === 'dst-stopped'));
+  check('被中断时面板 data-state=stopped',
+    nodes.some((n) => n.props?.['data-state'] === 'stopped'));
+}
+check('流式尾部按「后面还有没有正文块」判定，而不是 blocks.length-1',
+  /const tail = !blocks\.slice\(i \+ 1\)\.some/.test(clientSrc));
+check('自更新面板有重入守卫与卸载保护',
+  /const inFlight = React\.useRef\(false\)/.test(clientSrc)
+  && /const alive = React\.useRef\(true\)/.test(clientSrc));
 
 /* ================================================================== *
  * 3. 规格交叉比对（回查 DSH 出厂源码）
@@ -811,6 +852,29 @@ check('自更新客户端：变更类方法带空 JSON body 发 POST',
 check('两端方法策略不相交（status 只读，其余变更）',
   !/MUTATING = new Set\(\[[^\]]*'status'/.test(indexSrc));
 check('路线图文档存在（0.2.0 待办）', fs.existsSync(path.join(pkgDir, 'docs', 'ROADMAP.md')));
+check('自更新：Host 侧有并发互斥（桌面端与 Web GUI 可能同时点）',
+  /async function locked\(label, fn\)/.test(selfUpdateSrc)
+  && /check: \(\) => locked\('check', checkImpl\)/.test(selfUpdateSrc)
+  && /install: \(version\) => locked\('install'/.test(selfUpdateSrc)
+  && /rollback: \(version\) => locked\('rollback'/.test(selfUpdateSrc));
+/* ⚠️ 这两条用 includes 而不是正则：同一个模式写成正则时死活匹配不上 ——
+ * 字符码逐一对得上、`new RegExp(source)` 重建也不匹配、而 has 判断是 true。
+ * 断言真正要的是「源码长这样」，不是「正则引擎对不对」，所以用确定性比较。 */
+check('自更新：体积上限是流式判定，不是读完再判',
+  selfUpdateSrc.includes("if (res.body && typeof res.body.getReader === 'function')")
+  && selfUpdateSrc.includes('if (total > maxBytes)'));
+check('自更新：没有流式 body 时退回一次性读取，但仍判大小',
+  selfUpdateSrc.includes('const buf = Buffer.from(await res.arrayBuffer());')
+  && selfUpdateSrc.includes('if (buf.length > maxBytes) throw tooBig();'));
+{
+  // 回归：早先 registerUpdateRoutes 在 `if (text === null) return;` 之后，
+  // 于是 mode=off 的用户会连自更新面板一起失去（/update/status 变 404）。
+  const applyBody = indexSrc.slice(indexSrc.indexOf('export function apply'));
+  const at = applyBody.indexOf('registerUpdateRoutes(ctx)');
+  const guard = applyBody.indexOf('if (text === null) return');
+  check('自更新端点注册在 off 短路之前（mode=off 也不丢自更新）',
+    at >= 0 && guard >= 0 && at < guard, `at=${at} guard=${guard}`);
+}
 check('自更新按需注入 webServer（缺了也不影响插件本身）',
   /ctx\.inject\(\['connection', 'webServer'\]/.test(indexSrc));
 check('Client 侧端点不可用时静默隐藏（不阻断插件）',

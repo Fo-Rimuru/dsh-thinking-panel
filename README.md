@@ -119,6 +119,36 @@ pnpm 会写成 `link:` 依赖 —— 改源码即生效（Client 半部热加载
 > ⚠️ **Host 半部不热加载**：改完 `index.js` 必须**重启 DSH** 才会生效
 > （实测：不重启时系统提示词里仍是旧版、也没有运行时上下文）。Client 半部会热加载。
 
+### ⚠️ GitHub 直装失败怎么办
+
+从 GitHub 地址安装时，pnpm 解析引用会跑 `git ls-remote`，而**它可能选用 SSH 协议**
+（`git+ssh://git@github.com/...`）。机器上没配 SSH key 就会失败，报错通常是这两种之一：
+
+```
+Host key verification failed.                      ← 没有 known_hosts
+git@github.com: Permission denied (publickey).     ← 有 known_hosts 但没 SSH key
+```
+
+**这条路本身不稳定**：同一台机器可能这次走 HTTPS 成功、下次走 SSH 失败。
+所以**首选 npm 通道**（完全不经过 git）：
+
+```powershell
+& $dsh plugin --profile desktop add dsh-thinking-panel
+```
+
+**如果你确实要走 GitHub**，让 git 把所有 SSH 形式的 GitHub 地址自动改写成 HTTPS ——
+在 `~/.gitconfig` 里加：
+
+```ini
+[url "https://github.com/"]
+	insteadOf = git+ssh://git@github.com/
+	insteadOf = ssh://git@github.com/
+	insteadOf = git@github.com:
+```
+
+改完之后 `github:owner/repo` 和完整 URL 都会走 HTTPS，不再需要 SSH key。
+（也可以两种写法都试一下，哪个通用哪个。）
+
 ## 自动更新与回滚
 
 插件自带自更新，入口就在 **设置 → 通用 → 深度思考面板** 那一行下面。

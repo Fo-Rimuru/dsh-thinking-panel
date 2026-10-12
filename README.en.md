@@ -127,6 +127,36 @@ You can also use the GUI: **Settings → Plugins → Install local package**.
 > (measured: without a restart the old prompt section is still in effect and the runtime context
 > is missing entirely). The client half does hot-reload.
 
+### ⚠️ If installing from GitHub fails
+
+When installing from a GitHub URL, pnpm resolves the reference with `git ls-remote`, and
+**it may pick the SSH protocol** (`git+ssh://git@github.com/...`). On a machine without an
+SSH key this fails with one of:
+
+```
+Host key verification failed.                      # no known_hosts
+git@github.com: Permission denied (publickey).     # known_hosts present, no key
+```
+
+**This path is inherently unreliable** — the same machine may take HTTPS one time and SSH the
+next. So **prefer the npm channel**, which never touches git:
+
+```powershell
+& $dsh plugin --profile desktop add dsh-thinking-panel
+```
+
+**If you do want to use GitHub**, make git rewrite every SSH-form GitHub address to HTTPS by
+adding this to `~/.gitconfig`:
+
+```ini
+[url "https://github.com/"]
+	insteadOf = git+ssh://git@github.com/
+	insteadOf = ssh://git@github.com/
+	insteadOf = git@github.com:
+```
+
+After that, both `github:owner/repo` and full URLs go over HTTPS and no SSH key is needed.
+
 ## Self-update and rollback
 
 The plugin updates itself; the controls live right under **Settings → General → Thinking Panel**.

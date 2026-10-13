@@ -688,10 +688,15 @@ check('「回到底部」只在没贴底时出现',
 check('外层跟随的兜底挂在整个 assistant 节点上（不只是思考面板）',
   /const stepRef = React\.useRef\(null\);/.test(clientSrc)
   && /conversationScroller\(stepRef\.current\)/.test(clientSrc));
-check('预览行数可配（:root 上的 CSS 变量 + 记忆）',
+check('预览行数可配（滑动条 1–20，:root 上的 CSS 变量 + 记忆）',
   /var\(--dst-preview-lines,5\)/.test(clientSrc)
   && /setProperty\('--dst-preview-lines'/.test(clientSrc)
-  && /dsh-thinking-panel\.preview-lines/.test(clientSrc));
+  && /dsh-thinking-panel\.preview-lines/.test(clientSrc)
+  && /function SliderRow\(props\)/.test(clientSrc)
+  && /const PREVIEW_MIN = 1;/.test(clientSrc)
+  && /const PREVIEW_MAX = 20;/.test(clientSrc));
+check('滑块自绘（官方 primitives 只导出 Switch，没有 Slider），越界输入会被夹住',
+  /type: 'range'/.test(clientSrc) && /function clampPreview\(next\)/.test(clientSrc));
 check('负边距只在插件自己的正文容器里补偿（不再全局）',
   /\.dst-body>\[data-turn-process-inline\]\[hidden\]\{margin-bottom:-16px\}/.test(clientSrc));
 check('未知块传的是包装体里的真实载荷', /const payload = block\.block !== undefined \? block\.block : block;/.test(clientSrc));

@@ -324,7 +324,7 @@ for (const [label, needle] of [
   ['标题常态色', 'color:var(--dsw-alias-label-secondary)'],
   ['标题悬停色', 'color:var(--dsw-alias-label-primary)'],
   ['正文官方字体令牌', 'font:var(--dsw-font-markdown-small)'],
-  ['预览高度上限 5×行高+10dp', 'max-height:calc(110px + var(--dsh-content-font-delta-secondary,0px) * 5)'],
+  ['预览高度上限 = 行数变量 × 行高 + 10dp', 'max-height:calc(var(--dst-preview-lines,5) * 20px + 10px'],
   ['预览可滚动', 'overflow-y:auto'],
   ['滚动淡出遮罩', 'mask-image:linear-gradient(180deg'],
   ['折叠推理块间距（出厂同构）', '[data-turn-process-inline][hidden]{margin-bottom:-16px}'],
@@ -640,7 +640,11 @@ const baseProps = (over = {}) => ({
   check('Switch 受控：checked 反映当前开关状态', typeof sw?.props?.checked === 'boolean');
   check('Switch 带无障碍 label', typeof sw?.props?.label === 'string' && sw.props.label.length > 0);
   check('Switch 的 onChange 是函数', typeof sw?.props?.onChange === 'function');
-  check('不再渲染白底白字的文字按钮', !flat.includes('aria-pressed'));
+  // 回归：早先是自绘的文字 button —— 深色主题下 --dsw-alias-brand-primary 与
+  // --dsw-alias-label-primary 都是白色，白底白字，「已启用」几乎读不出来。
+  // （`aria-pressed` 现在也出现在设置页「预览行数」那排选项按钮上，所以按 Switch 的存在性判。）
+  check('开关行用官方 Switch 或自绘滑块（不是文字按钮）',
+    /\? h\(Switch, \{/.test(clientSrc) && /role: 'switch'/.test(clientSrc));
 }
 
 /* --- 0.2.0：设置页、开关接线与一批审查修复的回查 ------------------------ */
@@ -667,6 +671,27 @@ check('排版容器与出厂同构（.root 字号行高 / .body 16px 间距）',
   && /\.dst-body>\*\+\*\{margin-top:16px\}/.test(clientSrc));
 check('排版容器刻意不用 flex+gap（flex item 的 min-height:auto 会把 5 行预览压成 1 行）',
   !/\.dst-body\{flex-direction:column;gap:16px/.test(clientSrc));
+
+/* --- 0.2.1 新增的四个功能 ---------------------------------------------- */
+check('思考中显示已用时间（用出厂的 data.time，不自己计时）',
+  /startedAt: typeof data\.time === 'number' \? data\.time : null/.test(clientSrc)
+  && /const liveSeconds = running && hasStart/.test(clientSrc));
+check('自检区块渲染到设置页',
+  /function DiagBlock\(props\)/.test(clientSrc) && /h\(DiagBlock, \{ key: 'diag'/.test(clientSrc));
+check('自检记录自动展开的成功/放弃次数与导航图标状态',
+  /diag\.revealHits \+= 1/.test(clientSrc) && /diag\.revealMisses \+= 1/.test(clientSrc)
+  && /diag\.navIcon = 'applied'/.test(clientSrc));
+check('「回到底部」只在没贴底时出现',
+  /const backToBottom = atBottom \? null : h\('button'/.test(clientSrc));
+// 回归：只挂在思考面板里不够 —— 面板在「最终回答」阶段已经不再变化（running=false、text 不变），
+// 而内容还在长，那正是实测撞上的那条路。
+check('外层跟随的兜底挂在整个 assistant 节点上（不只是思考面板）',
+  /const stepRef = React\.useRef\(null\);/.test(clientSrc)
+  && /conversationScroller\(stepRef\.current\)/.test(clientSrc));
+check('预览行数可配（:root 上的 CSS 变量 + 记忆）',
+  /var\(--dst-preview-lines,5\)/.test(clientSrc)
+  && /setProperty\('--dst-preview-lines'/.test(clientSrc)
+  && /dsh-thinking-panel\.preview-lines/.test(clientSrc));
 check('负边距只在插件自己的正文容器里补偿（不再全局）',
   /\.dst-body>\[data-turn-process-inline\]\[hidden\]\{margin-bottom:-16px\}/.test(clientSrc));
 check('未知块传的是包装体里的真实载荷', /const payload = block\.block !== undefined \? block\.block : block;/.test(clientSrc));

@@ -67,6 +67,28 @@ window.__ModuleLoader__.load({
     /** 兼容性提示的留档：设置页会读它并显示出来。 */
     const compatIssues = [];
 
+    /**
+     * 自检数据（设置页会渲染出来）。
+     *
+     * 为什么需要：本插件靠**遮蔽出厂的 `assistant-step`** 工作，DSH 每次升级都可能改这个
+     * 节点的契约，而失败时的表现是「样式悄悄变回出厂」—— 用户只会以为插件没装好。
+     * 把这些状态摊开，至少能一眼看出是哪一环掉了。
+     */
+    const diag = {
+      // 静态能力（缺了就降级）
+      markdownText: MarkdownText !== null,
+      jsonBlock: JsonBlock !== null,
+      thinkIcon: IconThink !== null,
+      switch: Switch !== null,
+      // 运行时计数
+      rendered: 0,          // 成功渲染过的 assistant 节点数
+      degraded: 0,          // 走了纯文本兜底的次数
+      revealHits: 0,        // 自动展开过程组成功次数
+      revealMisses: 0,      // 自动展开重试到放弃的次数
+      navIcon: 'unknown',   // 导航图标补丁：applied / missing / unknown
+      since: Date.now(),
+    };
+
     function compatReport(problem, detail) {
       /* 留档一份：设置页会把它显示出来 —— 只打控制台的话，用户永远看不到，
        * 只会觉得「装了插件样式没变」。 */
@@ -111,6 +133,19 @@ window.__ModuleLoader__.load({
       'settings.autoUpdate.desc': 'DSH 启动后自动检查并安装新版本（写入前有预检与备份，失败会自动回滚）。',
       'settings.autoUpdate.toggle': '自动安装新版本',
       'update.rollbackTo': '回退到 v{v}',
+      /* 自检 */
+      'diag.title': '自检',
+      'diag.render': '渲染过的思考节点',
+      'diag.degraded': '降级',
+      'diag.primitives': '可用的官方组件',
+      'diag.autoReveal': '自动展开（成功 / 尝试）',
+      'diag.navIcon': '导航图标补丁',
+      'diag.compat': '兼容性提示',
+      'diag.none': '无（已全部降级）',
+      'diag.ok': '无',
+      'diag.hint': '样式悄悄变回出厂时，先看这里：哪一项是 0 或者「无」，就是那一环掉了。',
+      'settings.preview.title': '思考预览行数',
+      'settings.preview.desc': '「思考中」折叠态显示几行推理正文。5 行是照官方客户端的观感定的。',
       'settings.desc': '让思考内容跟随用户输入语言；思考中多行滚动预览、展开看完整推理、左侧竖线、「已思考（用时 X 秒）」标题。',
       'settings.on': '已启用',
       'settings.off': '已停用',
@@ -124,6 +159,7 @@ window.__ModuleLoader__.load({
       'think.srRunning': '正在思考',
       'think.copy': '复制',
       'think.copied': '已复制',
+      'think.backToBottom': '回到底部',
       'plain.unknownBlock': '未知内容块',
       'plain.truncated': '已截断（共 {total} 行）',
       'think.done': '已思考',
@@ -163,6 +199,19 @@ window.__ModuleLoader__.load({
       'settings.autoUpdate.desc': 'Checks for and installs new versions after DSH starts (pre-checked, backed up, and rolled back on failure).',
       'settings.autoUpdate.toggle': 'Install new versions automatically',
       'update.rollbackTo': 'Roll back to v{v}',
+      /* self-check */
+      'diag.title': 'Self-check',
+      'diag.render': 'Thinking nodes rendered',
+      'diag.degraded': 'degraded',
+      'diag.primitives': 'Official components available',
+      'diag.autoReveal': 'Auto-expand (ok / attempts)',
+      'diag.navIcon': 'Nav icon patch',
+      'diag.compat': 'Compatibility notices',
+      'diag.none': 'none (fully degraded)',
+      'diag.ok': 'none',
+      'diag.hint': 'If the styling silently reverts to shipped, look here first: whichever row is 0 or "none" is the broken link.',
+      'settings.preview.title': 'Preview lines',
+      'settings.preview.desc': 'How many lines of reasoning the collapsed "thinking" state shows. Five matches the official client.',
       'settings.desc': 'Reasoning follows your language; multi-line live preview, expandable full reasoning, left rail, and a duration title.',
       'settings.on': 'Enabled',
       'settings.off': 'Disabled',
@@ -176,6 +225,7 @@ window.__ModuleLoader__.load({
       'think.srRunning': 'Thinking',
       'think.copy': 'Copy',
       'think.copied': 'Copied',
+      'think.backToBottom': 'Back to bottom',
       'plain.unknownBlock': 'Unknown block',
       'plain.truncated': 'Truncated ({total} lines)',
       'think.done': 'Thought',
@@ -222,7 +272,7 @@ window.__ModuleLoader__.load({
 .dst-think-chevron{margin-left:8px;flex:none;color:var(--dsw-alias-label-caption);
   transition:transform .2s;transform:rotate(0deg)}
 .dst-think-head[data-open] .dst-think-chevron{transform:rotate(90deg)}
-.dst-think-preview{margin-top:2px;max-height:calc(${20 * PREVIEW_LINES + 10}px + var(--dsh-content-font-delta-secondary,0px) * ${PREVIEW_LINES});
+.dst-think-preview{margin-top:2px;max-height:calc(var(--dst-preview-lines,5) * 20px + 10px + var(--dsh-content-font-delta-secondary,0px) * var(--dst-preview-lines,5));
   overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;
   color:var(--dsw-alias-label-secondary);
   font:var(--dsw-font-markdown-small);
@@ -269,6 +319,36 @@ window.__ModuleLoader__.load({
 .dst-update-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0 10px;
   font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .dst-update-ver,.dst-update-arrow{color:var(--dsw-alias-label-secondary)}
+/* 设置页的自检区块 */
+.dst-diag{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover);
+  font-size:12px;line-height:18px}
+.dst-diag-title{color:var(--dsw-alias-label-secondary);margin-bottom:6px}
+.dst-diag-row{display:flex;gap:8px;color:var(--dsw-alias-label-tertiary)}
+.dst-diag-key{flex:none;min-width:9em}
+.dst-diag-val{color:var(--dsw-alias-label-secondary);word-break:break-all}
+.dst-diag-hint{margin-top:6px;color:var(--dsw-alias-label-caption)}
+.dst-diag-issues{margin-top:6px;white-space:pre-wrap;
+  color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-secondary))}
+/* 设置页的选项行（预览行数）：一排小按钮，选中态用品牌色 */
+.dst-choice{display:flex;align-items:center;gap:12px;padding:10px 0;min-width:0}
+.dst-choice-text{flex:1 1 auto;min-width:0}
+.dst-choice-title{font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}
+.dst-choice-desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.dst-choice-opts{flex:none;display:inline-flex;gap:6px}
+.dst-choice-btn{cursor:pointer;min-width:34px;height:26px;padding:0 8px;border-radius:6px;
+  border:1px solid var(--dsw-alias-border-l1);background:transparent;
+  color:var(--dsw-alias-label-secondary);font-size:12px;line-height:24px}
+.dst-choice-btn:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
+.dst-choice-btn[data-active]{border-color:transparent;background:var(--dsw-alias-brand-primary);
+  color:var(--dsw-alias-label-primary-inverted,var(--dsw-alias-bg-base))}
+/* 「回到底部」：浮在面板右下的小胶囊，只在没贴底时出现（长推理翻上去之后不用一路拖回来） */
+.dst-scroll-bottom{position:absolute;right:8px;bottom:8px;z-index:2;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  height:22px;padding:0 9px;border-radius:999px;
+  border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);
+  color:var(--dsw-alias-label-secondary);font-size:11px;line-height:20px;
+  box-shadow:0 1px 4px rgba(0,0,0,.12);transition:color .15s,background .15s}
+.dst-scroll-bottom:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
 /* 思考面板的复制按钮（官方 Markdown 有复制，思考正文一直没有） */
 .dst-think-copy{margin-left:8px;flex:none;cursor:pointer;border:0;background:transparent;padding:0 4px;
   color:var(--dsw-alias-label-caption);font-size:var(--dsh-content-font-size-secondary,13px);border-radius:4px}
@@ -337,6 +417,45 @@ window.__ModuleLoader__.load({
     const autoRevealToggle = createToggle(AUTO_REVEAL_KEY, true);
     const useAutoReveal = autoRevealToggle.use;
     const setAutoReveal = autoRevealToggle.set;
+
+    /**
+     * 思考预览的行数（3 / 5 / 8 / 12）。
+     *
+     * 5 行是按官方观感定的，但屏幕高度和字号因人而异 —— 做成可选。
+     * 用 CSS 变量下发：`.dst-think-preview` 的 `max-height` 直接乘它。
+     */
+    const PREVIEW_KEY = 'dsh-thinking-panel.preview-lines';
+    const PREVIEW_CHOICES = [3, 5, 8, 12];
+    const previewSubs = new Set();
+    let previewLines = PREVIEW_LINES;
+    try {
+      const raw = Number(window.localStorage.getItem(PREVIEW_KEY));
+      if (PREVIEW_CHOICES.includes(raw)) previewLines = raw;
+    } catch { /* ignore */ }
+    /** 把当前行数写进 `:root` 的 CSS 变量（样式表里用 var() 读）。 */
+    function applyPreviewLines() {
+      try {
+        if (typeof document !== 'undefined' && document.documentElement) {
+          document.documentElement.style.setProperty('--dst-preview-lines', String(previewLines));
+        }
+      } catch { /* ignore */ }
+    }
+    function setPreviewLines(next) {
+      if (!PREVIEW_CHOICES.includes(next)) return;
+      previewLines = next;
+      try { window.localStorage.setItem(PREVIEW_KEY, String(next)); } catch { /* ignore */ }
+      applyPreviewLines();
+      for (const fn of previewSubs) fn();
+    }
+    function usePreviewLines() {
+      const [, force] = React.useReducer((n) => n + 1, 0);
+      React.useEffect(() => {
+        const listener = () => force();
+        previewSubs.add(listener);
+        return () => { previewSubs.delete(listener); };
+      }, []);
+      return previewLines;
+    }
 
     /**
      * 出厂的会话滚动容器带 `data-conversation-scroll`（在 ui-chat-client.js 里就是这么找的），
@@ -466,6 +585,7 @@ window.__ModuleLoader__.load({
       }
 
       componentDidCatch(error) {
+        diag.degraded += 1;
         try { console.error('[dsh-thinking-panel] render failed, falling back to plain text', error); }
         catch { /* ignore */ }
       }
@@ -654,6 +774,8 @@ window.__ModuleLoader__.load({
 
       const scrollRef = React.useRef(null);
       const rootRef = React.useRef(null);
+      /** 是否已经贴底（决定要不要显示「回到底部」）。 */
+      const [atBottom, setAtBottom] = React.useState(true);
       /**
        * 自动展开过程组（默认打开，可在「设置 → 通用」里关掉）。
        *
@@ -688,6 +810,7 @@ window.__ModuleLoader__.load({
 
         if (revealProcessGroup(el)) {
           revealed.current = true;
+          diag.revealHits += 1;
           settle();
           return undefined;
         }
@@ -705,8 +828,8 @@ window.__ModuleLoader__.load({
         const retry = () => {
           timer = 0;
           if (revealed.current) return;
-          if (revealProcessGroup(rootRef.current)) { revealed.current = true; settle(); return; }
-          if (++tries >= 8) return;
+          if (revealProcessGroup(rootRef.current)) { revealed.current = true; diag.revealHits += 1; settle(); return; }
+          if (++tries >= 8) { diag.revealMisses += 1; return; }
           timer = setTimeout(retry, 250);
         };
         timer = setTimeout(retry, 250);
@@ -767,7 +890,9 @@ window.__ModuleLoader__.load({
         const el = scrollRef.current;
         if (el === null) return;
         // 距底部 24px 内视为「跟随中」，否则暂停跟随
-        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+        stick.current = gap < 24;
+        setAtBottom(gap < 24);
       }, []);
 
       // 是否可滚动 → 决定底部淡出遮罩。
@@ -776,8 +901,9 @@ window.__ModuleLoader__.load({
       const updateCanScrollRef = React.useRef(null);
       updateCanScrollRef.current = () => {
         const el = scrollRef.current;
-        if (el === null || expanded) { setCanScroll(false); return; }
+        if (el === null || expanded) { setCanScroll(false); setAtBottom(true); return; }
         setCanScroll(el.scrollHeight > el.clientHeight + 1);
+        setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
       };
       useLayout(() => { updateCanScrollRef.current(); }, [text, expanded, running]);
       React.useEffect(() => {
@@ -789,9 +915,30 @@ window.__ModuleLoader__.load({
         return () => ro.disconnect();
       }, []);
 
-      const seconds = props.seconds;
+      /**
+       * 思考中也要显示已用时间。
+       *
+       * 数据是现成的：出厂 `projectAssistant` 里
+       * `const time = settled?.time ?? state.firstVisibleTime ?? …`（ui-chat-client.js 7604 行）
+       * —— 流式期就有 `state.firstVisibleTime`，所以**不需要自己计时**，
+       * 只要每秒重渲染一次、把差值算出来。定时器只在 running 时开。
+       */
+      const [, tick] = React.useState(0);
+      const startedAt = props.startedAt;
+      const hasStart = typeof startedAt === 'number' && startedAt > 0;
+      React.useEffect(() => {
+        if (!running || !hasStart) return undefined;
+        if (typeof setInterval !== 'function') return undefined;
+        const timer = setInterval(() => tick((n) => n + 1), 1000);
+        return () => { try { clearInterval(timer); } catch { /* ignore */ } };
+      }, [running, hasStart]);
+
+      const liveSeconds = running && hasStart
+        ? Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+        : null;
+      const seconds = liveSeconds !== null ? liveSeconds : props.seconds;
       const title = running
-        ? tr('think.running')
+        ? tr('think.running') + (liveSeconds !== null ? tr('think.seconds', { s: liveSeconds }) : '')
         : stopped
           ? tr('think.stopped')
           : (seconds !== null && seconds !== undefined
@@ -847,13 +994,31 @@ window.__ModuleLoader__.load({
           onScroll: handleScroll,
         }, inner);
 
+      /* 「回到底部」：长推理往上翻之后不用一路拖回来。只在没贴底时出现，浮在右下角。 */
+      const backToBottom = atBottom ? null : h('button', {
+        key: 'back',
+        type: 'button',
+        className: 'dst-scroll-bottom',
+        title: tr('think.backToBottom'),
+        'aria-label': tr('think.backToBottom'),
+        onClick: (event) => {
+          event.stopPropagation();
+          const el = scrollRef.current;
+          if (el === null) return;
+          markProgrammatic();
+          el.scrollTop = el.scrollHeight;
+          stick.current = true;
+          setAtBottom(true);
+        },
+      }, tr('think.backToBottom'));
+
       return h('div', {
         ref: rootRef,
         className: 'dst-think',
         'data-collapsed': expanded ? undefined : true,
         'data-variant': 'think',
         'data-state': running ? 'running' : (stopped ? 'stopped' : 'ok'),
-      }, [head, body]);
+      }, [head, body, backToBottom]);
     }
 
     /* ================================================================== *
@@ -866,6 +1031,8 @@ window.__ModuleLoader__.load({
         ? props.pluginT
         : (typeof props.t === 'function' ? props.t : IDENTITY_T);
       const on = useEnabled();
+      // 自检计数放在 effect 里（render 期间不改模块状态 —— 那是之前 timings 踩过的坑）
+      React.useEffect(() => { diag.rendered += 1; }, []);
 
       const data = (node && node.data) || {};
       const blocks = Array.isArray(data.blocks) ? data.blocks : [];
@@ -892,6 +1059,20 @@ window.__ModuleLoader__.load({
        * #310，生产下 hook 槽位错位（审查发现；与设置页那次是同一个病根）。
        * 出厂 AssistantNodeView 也是把 `const tail = useTurnData('turn-tail')` 放在顶层。 */
       const turnTail = typeof useTurnData === 'function' ? useTurnData('turn-tail') : undefined;
+
+      /**
+       * 外层跟随的兜底 —— **整个 assistant 节点**每次渲染都检查一次。
+       *
+       * ⚠️ 只挂在思考面板里是不够的：面板在「最终回答」阶段已经不再变化
+       *（`running=false`、`text` 也不再变），而内容还在长。
+       * 实测反馈正是这条路：「上一段话还没输出完就插话，之后界面不跟随」。
+       * 这里没有依赖数组 —— 每次渲染都查一次，代价只是一次 closest + 一次算术。
+       */
+      const stepRef = React.useRef(null);
+      React.useEffect(() => {
+        const outer = conversationScroller(stepRef.current);
+        if (isFollowingTail(outer)) scrollToTail(outer);
+      });
 
       // 文件提及（与出厂同构：仅在 turn 关闭且有 finalNode 时可用）
       const mentions = React.useMemo(() => {
@@ -945,6 +1126,8 @@ window.__ModuleLoader__.load({
               running: running && tail,
               stopped: interrupted,
               seconds,
+              // 思考中的「已用时间」用它算：出厂的 data.time 在流式期就是首个可见块的时间
+              startedAt: typeof data.time === 'number' ? data.time : null,
               useDisclosure,
               t: tr,
               labels,
@@ -1001,7 +1184,7 @@ window.__ModuleLoader__.load({
       /* 与出厂 AssistantMarkdown 同构：外面套 .dst-root（字号/行高/正文色基线）与
        * .dst-body（16px 块间距）。少了它们，多块消息的行距与段间距会和出厂不一样。 */
       return h(ThinkingBoundary, { blocks },
-        h('div', { className: 'dst-root', 'data-streaming': running || undefined },
+        h('div', { ref: stepRef, className: 'dst-root', 'data-streaming': running || undefined },
           h('div', { className: 'dst-body' },
             stoppedBadge === null ? out : out.concat([stoppedBadge]))));
     }
@@ -1159,7 +1342,8 @@ window.__ModuleLoader__.load({
               try {
                 original.replaceWith(clone);
                 clone.__dstOriginalSvg = original;    // 卸载时换回去
-              } catch { /* 失败＝保留齿轮 */ }
+                diag.navIcon = 'applied';
+              } catch { diag.navIcon = 'missing'; }
             }
           }
         } catch { /* 补丁失败＝保留齿轮 */ }
@@ -1189,16 +1373,66 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /** 设置页的「自检」区块：把 diag 摊成几行 —— 样式回退时一眼看出是哪一环掉了。 */
+    function DiagBlock(props) {
+      const tr = typeof props.t === 'function' ? props.t : IDENTITY_T;
+      const primitives = [
+        diag.markdownText ? 'MarkdownText' : null,
+        diag.thinkIcon ? 'IconThink' : null,
+        diag.jsonBlock ? 'JsonBlock' : null,
+        diag.switch ? 'Switch' : null,
+      ].filter(Boolean);
+      const rows = [
+        [tr('diag.render'), String(diag.rendered) + (diag.degraded > 0 ? `  ·  ${tr('diag.degraded')} ${diag.degraded}` : '')],
+        [tr('diag.primitives'), primitives.length > 0 ? primitives.join(' · ') : tr('diag.none')],
+        [tr('diag.autoReveal'), `${diag.revealHits} / ${diag.revealHits + diag.revealMisses}`],
+        [tr('diag.navIcon'), diag.navIcon],
+        [tr('diag.compat'), compatIssues.length > 0 ? String(compatIssues.length) : tr('diag.ok')],
+      ];
+      return h('div', { className: 'dst-diag' }, [
+        h('div', { key: 'title', className: 'dst-diag-title' }, tr('diag.title')),
+        ...rows.map((pair, i) => h('div', { key: `r${i}`, className: 'dst-diag-row' }, [
+          h('span', { key: 'k', className: 'dst-diag-key' }, pair[0]),
+          h('span', { key: 'v', className: 'dst-diag-val' }, String(pair[1])),
+        ])),
+        h('div', { key: 'hint', className: 'dst-diag-hint' }, tr('diag.hint')),
+        compatIssues.length > 0
+          ? h('div', { key: 'issues', className: 'dst-diag-issues' }, compatIssues.join('\n'))
+          : null,
+      ]);
+    }
+
     /**
      * 设置页 —— 注册在 `settings.section`，也就是设置左侧导航里**独立的一栏**。
      *
      * 早先挂在 `settings.general.item`（通用设置里的一行）：位置太深，也塞不下
      * 现在这些开关。`label` 是个 thunk，跟随语言切换。
      */
+    /** 一排小按钮的选项行（目前只有「预览行数」用）。 */
+    function ChoiceRow(props) {
+      const { title, desc, value, options, onChange } = props;
+      return h('div', { className: 'dst-choice' }, [
+        h('div', { key: 'text', className: 'dst-choice-text' }, [
+          h('div', { key: 't', className: 'dst-choice-title' }, title),
+          h('div', { key: 'd', className: 'dst-choice-desc' }, desc),
+        ]),
+        h('div', { key: 'opts', className: 'dst-choice-opts' },
+          options.map((opt) => h('button', {
+            key: String(opt.value),
+            type: 'button',
+            className: 'dst-choice-btn',
+            'data-active': opt.value === value || undefined,
+            'aria-pressed': opt.value === value,
+            onClick: () => onChange(opt.value),
+          }, opt.label))),
+      ]);
+    }
+
     function SettingsSection(props) {
       const tr = typeof props.t === 'function' ? props.t : IDENTITY_T;
       const on = useEnabled();
       const auto = useAutoReveal();
+      const preview = usePreviewLines();
       return h('div', { className: 'dst-page' }, [
         h('div', { key: 'title', className: 'dst-page-title' }, tr('settings.title')),
         compatIssues.length > 0
@@ -1224,7 +1458,16 @@ window.__ModuleLoader__.load({
           offLabel: tr('settings.autoReveal.off'),
           onChange: (next) => setAutoReveal(next),
         }),
+        h(ChoiceRow, {
+          key: 'preview',
+          title: tr('settings.preview.title'),
+          desc: tr('settings.preview.desc'),
+          value: preview,
+          options: PREVIEW_CHOICES.map((n) => ({ value: n, label: String(n) })),
+          onChange: (n) => setPreviewLines(n),
+        }),
         h(UpdatePanel, { key: 'update', t: tr }),
+        h(DiagBlock, { key: 'diag', t: tr }),
       ]);
     }
 
@@ -1430,6 +1673,8 @@ window.__ModuleLoader__.load({
 
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-thinking-panel: dictionaries');
         const t = ctx.locale.bind(NS);
+        // 预览行数落在 :root 的 CSS 变量上（样式表里 var(--dst-preview-lines,5)）
+        applyPreviewLines();
 
         /* 设置导航项的图标：官方只给第三方兜底齿轮，这里做 DOM 补丁换成本插件的思考图标
          *（失败就保留齿轮，不影响任何功能）。 */

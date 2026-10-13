@@ -335,6 +335,35 @@ window.__ModuleLoader__.load({
     const setAutoReveal = autoRevealToggle.set;
 
     /**
+     * 把**外层**会话滚动容器带回底部（仅当它本来就在底部附近）。
+     *
+     * 为什么需要：插件会自动展开「过程组」，面板高度从一行突变成几百像素。
+     * DSH 外层的跟随逻辑靠"离底部多远"判断阅读意图，一次几百像素的突变会超过它的阈值，
+     * 于是被当成「用户自己往上滚了」而停止跟随 —— 表现就是「新一轮开始了，界面却停在
+     * 上一段，得手动再拉一次」（实测反馈）。
+     * 这里只在**原本就贴着底部**（120px 内）时才动手，所以不会把正在回看的用户拽走。
+     */
+    const OUTER_FOLLOW_SLACK = 120;
+    function followOuterScroll(el) {
+      if (typeof getComputedStyle !== 'function') return;
+      try {
+        let node = el === null || el === undefined ? null : el.parentElement;
+        while (node !== null && node !== undefined && node !== document.body) {
+          const style = getComputedStyle(node);
+          const scrollable = node.scrollHeight > node.clientHeight + 1
+            && /(auto|scroll|overlay)/.test(String(style.overflowY));
+          if (scrollable) {
+            if (node.scrollHeight - node.scrollTop - node.clientHeight < OUTER_FOLLOW_SLACK) {
+              node.scrollTop = node.scrollHeight;
+            }
+            return;
+          }
+          node = node.parentElement;
+        }
+      } catch { /* ignore */ }
+    }
+
+    /**
      * 展开包住本面板的「过程组」，让被 hidden="until-found" 挡住的思考面板露出来。
      *
      * 优先走官方自己的揭示通道：出厂的 useSearchableHidden 在组体上注册了
@@ -625,7 +654,17 @@ window.__ModuleLoader__.load({
         const el = rootRef.current;
         // 非真实 DOM（自检的 mock 环境、降级路径）：没有可探测的祖先，直接放弃。
         if (el === null || typeof el.closest !== 'function') return undefined;
-        if (revealProcessGroup(el)) { revealed.current = true; return undefined; }
+        if (revealProcessGroup(el)) {
+          revealed.current = true;
+          /* 展开会让面板高度突变，外层跟随可能因此判定成「用户往上滚了」——
+           * 两帧后（等官方 setOpen 的重渲染落定）把外层带回底部。 */
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => requestAnimationFrame(() => followOuterScroll(el)));
+          } else {
+            followOuterScroll(el);
+          }
+          return undefined;
+        }
 
         /**
          * ⚠️ 首次没成功必须重试。这个 effect 的依赖只有 [autoReveal, running]，而 running

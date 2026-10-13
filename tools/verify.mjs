@@ -302,9 +302,16 @@ check('三个条目组件都是函数',
   && typeof nodeReg?.component === 'function');
 
 /* --- 渲染 <style> ------------------------------------------------------ */
-const styleEl = styleReg.component();
-check('StyleSeat 渲染出 <style> 元素', styleEl?.type === 'style');
+/* StyleSeat 现在返回 Fragment：<style> + 一个隐藏的图标样板（设置导航项的 DOM 补丁克隆它）。 */
+const styleSeatTree = styleReg.component();
+const styleSeatNodes = styleSeatTree && Array.isArray(styleSeatTree.children)
+  ? styleSeatTree.children
+  : [styleSeatTree];
+const styleEl = styleSeatNodes.find((node) => node && node.type === 'style');
+check('StyleSeat 渲染出 <style> 元素', !!styleEl, `type=${typeof styleSeatTree?.type}`);
 check('style 带 data-plugin 标记', styleEl?.props?.['data-plugin'] === 'dsh-thinking-panel');
+check('StyleSeat 同时给出图标样板（导航项图标从它克隆）',
+  /className: 'dst-icon-sample'/.test(clientSrc));
 const css = typeof styleEl?.children?.[0] === 'string' ? styleEl.children[0] : String(styleEl?.children ?? '');
 check('CSS 非空', css.length > 300, `${css.length} chars`);
 

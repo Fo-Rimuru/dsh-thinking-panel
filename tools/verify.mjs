@@ -756,6 +756,22 @@ const runningProps = () => baseProps({
   check('首次失败后会重试（官方晚一帧折叠也能展开）',
     dom.body.dispatched?.includes('beforematch') === true);
 }
+
+/* --- 展开后把外层会话带回底部（「插话后界面停在上一段」） ------------------ */
+{
+  // 回归①：早先沿 parentElement 找「第一个可滚动祖先」，先撞上过程组自己的
+  // [data-step-process-body]（同样 overflow:auto），于是把组体滚到底、外层纹丝不动。
+  check('外层滚动容器用 data-conversation-scroll 定位',
+    /closest\('\[data-conversation-scroll\]'\)/.test(clientSrc)
+    && !/function followOuterScroll/.test(clientSrc));
+  // 回归②：早先在**展开之后**才判断是否贴着底部 —— 那时内容已长高几百像素，
+  // 守卫反而把正确的修复挡掉；所以必须在展开前采样，容差也要放宽到近一屏。
+  check('跟随状态在展开之前采样，容差按近一屏算',
+    /const following = isFollowingTail\(conversationScroller\(el\)\);/.test(clientSrc)
+    && /node\.clientHeight \* 0\.9/.test(clientSrc));
+  check('展开后把外层带回底部（顺带触发 scroll 事件让 DSH 恢复跟随）',
+    /scrollToTail\(conversationScroller\(el\)\)/.test(clientSrc));
+}
 {
   // (c) 已结束的轮次 → 不动作（那是 DSH 自己的收起规则，四种模式一致）
   const dom = makeProcessGroupDom({ hidden: true });

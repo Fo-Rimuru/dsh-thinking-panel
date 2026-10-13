@@ -12,8 +12,26 @@ import { gunzipSync } from 'node:zlib';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 export const PACKAGE_NAME = 'dsh-thinking-panel';
-export const REGISTRY_LATEST_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
-export const tarballUrl = (version) => `https://registry.npmjs.org/${PACKAGE_NAME}/-/${PACKAGE_NAME}-${version}.tgz`;
+
+/**
+ * registry 候选节点，**按顺序尝试**，第一个成功的胜出。
+ *
+ * 官方源在前，紧跟一个国内可直连的完整镜像（npmmirror / 阿里云）——
+ * 官方源在某些网络下会超时或很慢，而自动更新是后台跑的，不该让用户为此等待或失败。
+ * npmmirror 走完整的 registry 协议：`/<pkg>/latest` 与 `/<pkg>/-/<pkg>-<v>.tgz` 都支持。
+ * 想固定走某个源，把它挪到数组第一位即可（或删掉另一个）。
+ */
+export const REGISTRIES = [
+  'https://registry.npmjs.org',
+  'https://registry.npmmirror.com',
+];
+
+export const latestUrl = (registry, name = PACKAGE_NAME) => `${registry}/${name}/latest`;
+export const tarballUrl = (version, registry = REGISTRIES[0], name = PACKAGE_NAME) =>
+  `${registry}/${name}/-/${name}-${version}.tgz`;
+
+/** 旧名保留（外部或测试可能引用）。 */
+export const REGISTRY_LATEST_URL = latestUrl(REGISTRIES[0]);
 
 /**
  * 允许被更新覆盖的路径白名单。
@@ -378,10 +396,27 @@ export function createSelfUpdater(options) {
     } finally { clearTimeout(timer); }
   }
 
+  /**
+   * 按候选顺序抓同一个逻辑资源，返回**第一个成功**的响应（候选见模块顶部的 REGISTRIES）。
+   * 全部失败时抛出的 Error 会汇总每个节点的原因 —— 状态与自检里都看得到，
+   * 免得用户只看到一句没有上下文的「HTTP 404」。
+   */
+  async function fetchFromAnyRegistry(buildUrl) {
+    const failures = [];
+    for (const registry of REGISTRIES) {
+      try {
+        return await fetchWithLimit(buildUrl(registry));
+      } catch (error) {
+        failures.push(`${registry} — ${error && error.message ? error.message : error}`);
+      }
+    }
+    throw new Error(`所有 registry 节点都不可用：${failures.join('；')}`);
+  }
+
   /** 查询 npm registry 上的最新版本。 */
   async function checkImpl() {
     try {
-      const buf = await fetchWithLimit(REGISTRY_LATEST_URL);
+      const buf = await fetchFromAnyRegistry((registry) => latestUrl(registry));
       const meta = JSON.parse(buf.toString('utf8'));
       const latest = typeof meta.version === 'string' ? meta.version : null;
       if (latest === null) throw new Error('registry 返回里没有 version 字段');
@@ -413,7 +448,7 @@ export function createSelfUpdater(options) {
       return { ok: false, error: `当前版本 ${runningVersion} 不低于 ${target}，无需更新` };
     }
     try {
-      const tarball = await fetchWithLimit(tarballUrl(target));
+      const tarball = await fetchFromAnyRegistry((registry) => tarballUrl(target, registry));
       const files = extractPackageFiles(tarball);
       if (files.length === 0) throw new Error('tarball 里没有白名单内的文件（包结构可能变了）');
       /* 记下「装之前磁盘上是哪个版本」—— 回滚的默认目标就是它。
@@ -446,7 +481,7 @@ export function createSelfUpdater(options) {
       ? version
       : (state.previousVersion || runningVersion);
     try {
-      const tarball = await fetchWithLimit(tarballUrl(target));
+      const tarball = await fetchFromAnyRegistry((registry) => tarballUrl(target, registry));
       const files = extractPackageFiles(tarball);
       if (files.length === 0) throw new Error('tarball 里没有白名单内的文件');
       const before = readInstalledVersion(packageDir) ?? runningVersion;

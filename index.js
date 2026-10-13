@@ -300,7 +300,15 @@ const AUTO_UPDATE_DELAY_MS = 8000;
 
 function registerUpdateRoutes(ctx, settings = {}) {
   if (typeof ctx.inject !== 'function') return;
-  ctx.inject(['connection', 'webServer'], (webCtx) => {
+  /* ⚠️ 只声明 webServer，不要连 connection 一起要。
+   *
+   * `ctx.inject([...], cb)` 的含义是「列出的服务**全部**就绪才调用 cb」。
+   * 早先这里写的是 `inject(['connection', 'webServer'])`，而 `connection` 是**可选服务**
+   * （对照：dsh-bottom-info-bar 把 connection / webServer 都当可选依赖声明式获取，
+   *  @copylee/dsh-computer-use 只 inject ["webServer"]）。它一旦缺席，回调就永不触发 ——
+   * 端点 404，用户看到的就是「自动更新暂不可用 HTTP 404」（实测：本机 19387 上也是 404）。
+   * 鉴权那层改成可选：拿不到 connection 就跳过 requestRejection。 */
+  ctx.inject(['webServer'], (webCtx) => {
     let updater = null;
     try {
       const packageDir = dirname(fileURLToPath(import.meta.url));
@@ -344,9 +352,11 @@ function registerUpdateRoutes(ctx, settings = {}) {
         res.end(body);
       };
       try {
-        // 复用 DSH 的鉴权边界：未授权请求直接拒绝
-        const rejection = webCtx.connection.requestRejection(req);
-        if (rejection !== undefined) { send(rejection, { error: 'request rejected' }); return; }
+        // 复用 DSH 的鉴权边界（可选：connection 缺席时跳过，webServer 本身只监听 loopback）
+        if (typeof webCtx.connection?.requestRejection === 'function') {
+          const rejection = webCtx.connection.requestRejection(req);
+          if (rejection !== undefined) { send(rejection, { error: 'request rejected' }); return; }
+        }
 
         const url = new URL(req.url || '/', 'http://localhost');
         if (!url.pathname.startsWith(`${ROUTE_PREFIX}/`)) { send(404, { error: 'not found' }); return; }

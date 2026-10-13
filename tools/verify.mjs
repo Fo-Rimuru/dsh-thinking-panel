@@ -986,8 +986,19 @@ check('自更新：没有流式 body 时退回一次性读取，但仍判大小'
     /AUTO_UPDATE_DELAY_MS/.test(indexSrc) && /updater\.autoUpdate\(\)/.test(indexSrc)
     && /typeof timer\.unref === 'function'/.test(indexSrc));
 }
-check('自更新按需注入 webServer（缺了也不影响插件本身）',
-  /ctx\.inject\(\['connection', 'webServer'\]/.test(indexSrc));
+/* 回归：早先写的是 `inject(['connection','webServer'])` —— 那要求**两个服务都就绪**才回调，
+ * 而 connection 是可选服务，它一旦缺席回调就永不触发 → 端点 404，
+ * 用户看到的就是「自动更新暂不可用 HTTP 404」（实测：本机 19387 也是 404）。
+ * 对照：@copylee/dsh-computer-use 只 inject ["webServer"]。 */
+check('自更新只依赖 webServer（connection 缺席也能注册端点）',
+  /ctx\.inject\(\['webServer'\]/.test(indexSrc)
+  && !/ctx\.inject\(\['connection', 'webServer'\]/.test(indexSrc));
+check('鉴权改成可选（拿不到 connection 就跳过 requestRejection）',
+  /typeof webCtx\.connection\?\.requestRejection === 'function'/.test(indexSrc));
+check('registry 有国内备选节点（npmmirror），按顺序自动尝试',
+  /'https:\/\/registry\.npmmirror\.com'/.test(selfUpdateSrc)
+  && /async function fetchFromAnyRegistry/.test(selfUpdateSrc)
+  && /所有 registry 节点都不可用/.test(selfUpdateSrc));
 check('端点失败时不再静默隐藏，而是把原因显示出来',
   /update\.endpointDown/.test(clientSrc) && /setEndpointError\(String\(error/.test(clientSrc));
 check('端点回来之前显示「正在读取」占位（不闪空白）',

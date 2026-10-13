@@ -220,9 +220,14 @@ State and backups live in `$DSH_HOME/plugin-data/dsh-thinking-panel/` (`update-s
 
 ### Settings page (recommended)
 
-**Settings → Thinking Panel** holds four switches: plugin master switch, "reason in the language of
-the question", auto-expand the process group, and automatic updates. The injection switch is on by
-default — turn it off to go back to the shipped English reasoning (more reliable on some tasks).
+**Settings → Thinking Panel** holds four switches plus one slider: plugin master switch,
+"reason in the language of the question", auto-expand the process group, automatic updates, and
+**preview lines** (1–20, default 5, applied as you drag). The injection switch is on by default —
+turn it off to go back to the shipped English reasoning (more reliable on some tasks).
+
+Below that is a **self-check** block: which official components are available, render/degraded
+counts, auto-expand hits and give-ups, nav-icon patch state, and compatibility notices.
+**If the styling ever silently reverts to shipped, this tells you which link broke.**
 
 ### `cordis.patch.yml` (advanced: force a language)
 

@@ -1079,15 +1079,32 @@ window.__ModuleLoader__.load({
       /**
        * 外层跟随的兜底 —— **整个 assistant 节点**每次渲染都检查一次。
        *
-       * ⚠️ 只挂在思考面板里是不够的：面板在「最终回答」阶段已经不再变化
-       *（`running=false`、`text` 也不再变），而内容还在长。
-       * 实测反馈正是这条路：「上一段话还没输出完就插话，之后界面不跟随」。
-       * 这里没有依赖数组 —— 每次渲染都查一次，代价只是一次 closest + 一次算术。
+       * ⚠️ 判定「用户是否在跟随」**不能只看距离**：DSH 自己用 25px 阈值
+       *（`useScrollFollow(state.followingTail, 25)`），而我们一次「输出一大堆」就能长几百像素，
+       * 一超阈值就被当成「用户在往上读」，之后连插话都不再滚
+       *（出厂 4979 行：`… && reading.followingTail`）。把容差调大只是往后拖，
+       * 「一次长过一屏」照样失效。
+       *
+       * 所以改成**跟踪用户意图**：只有用户真的滚动过、并且滚出了底部，才停止跟随；
+       * 内容长高本身不算。scroll 事件里维护这个意图，每次渲染后据此决定要不要贴底。
        */
       const stepRef = React.useRef(null);
+      const followingRef = React.useRef(true);
       React.useEffect(() => {
         const outer = conversationScroller(stepRef.current);
-        if (isFollowingTail(outer)) scrollToTail(outer);
+        if (outer === null || typeof outer.addEventListener !== 'function') return undefined;
+        // 初值按挂载那一刻的实际情况定（用户可能正停在历史里看，不能把他拽走）
+        followingRef.current = isFollowingTail(outer);
+        const onScroll = () => { followingRef.current = isFollowingTail(outer); };
+        outer.addEventListener('scroll', onScroll, { passive: true });
+        return () => {
+          try { outer.removeEventListener('scroll', onScroll); } catch { /* ignore */ }
+        };
+      }, []);
+      React.useEffect(() => {
+        const outer = conversationScroller(stepRef.current);
+        if (outer === null) return;
+        if (followingRef.current) scrollToTail(outer);
       });
 
       // 文件提及（与出厂同构：仅在 turn 关闭且有 finalNode 时可用）

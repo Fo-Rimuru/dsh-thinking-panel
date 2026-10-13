@@ -139,3 +139,38 @@
 
 **方法学教训**：这一条修了五轮，前四轮都在「猜哪里长高了」，而答案一直在出厂的 `ScrollFollow` 里。
 **先读源码，再动手。**
+
+---
+
+## 待定位：插件在 desktop profile 上「静默不激活」
+
+**现象**（2026-10-14 实测）：设置页看不到「深度思考面板」栏、自更新端点返回 **HTTP 404**。
+⚠️ 这个 404 与「国内网络能否直连」**无关** —— 它是插件**自己**在 DSH 里注册的本地端点。
+
+**已经查清的（全部有实证）**：
+
+- 配置树里**有**这个插件：`dsh --profile dst-test --dump-config` →
+  `- id: thinking-panel / name: dsh-thinking-panel / config: {mode: auto}`；
+- 模块本身**能加载**：用 DSH 自带的 Electron node（v24.18.1，`ELECTRON_RUN_AS_NODE=1`）
+  import `index.js` / `self-update.js` **都成功**；
+- 但 **`apply` 从来没被调用过** —— 在 apply 开头写 trace 到
+  `$DSH_HOME/plugin-data/dsh-thinking-panel/apply-trace.log`，重启后**文件不存在**；
+- DSH 只留一句 `web boot: 1 entry did not activate`，浏览器控制台里**没有**更详细的原因；
+- 对照：npm 装的插件（`dsh-bottom-info-bar` 等）端点返回 **401**（= 路由存在，完全正常）；
+  另一个 **symlink 装的 `dsh-cot-translator` 同样报 `import failed`**。
+
+**排除过的假设（不要再试）**：
+
+1. ~~`ctx.inject(['connection','webServer'])` 多要了可选服务~~ → 改成只 `['webServer']`，无效；
+2. ~~`package.json` 缺 `main`~~ → 补了 `"main": "index.js"`，无效（但该字段本身该有）；
+3. ~~`dsh.client.inject` 里的 `@deepseek-ai/dsh-client-ui-settings` 不存在~~ → 摘掉后仍不激活；
+4. ~~`export const inject = ['systemPrompt']` 静态硬门禁~~ → 删掉后仍不激活。
+
+**下一步从这里开始**：
+
+- 嫌疑集中在 **本地链接安装（`link:` / symlink）的插件在 desktop profile 上不被激活** ——
+  四个本地装的插件里，两个 symlink 的都有问题，npm 装的全部正常；
+- 验证方法：把插件用 **`file:`（pnpm 的硬链接，仍与工作区同步）** 或打成 tarball
+  用 `dsh plugin add` 装进副本 profile，看是否恢复激活；
+- 注意 `dsh-infinite-gen-5` 是 **Junction 且没有报错**，所以未必是链接类型本身，
+  也可能是**依赖解析**：`link:` 的包不进 profile 的依赖树，而 DSH 可能按依赖树决定加载。

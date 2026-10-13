@@ -27,8 +27,18 @@ import { createSelfUpdater } from './self-update.js';
 
 export const name = 'dsh-thinking-panel';
 
-/** 只在 systemPrompt 服务存在时激活。 */
-export const inject = ['systemPrompt'];
+/**
+ * ⚠️ 这里**故意不写** `export const inject = ['systemPrompt']`。
+ *
+ * cordis 的静态 `inject` 是**硬门禁**：声明的服务不满足时整个插件**静默不激活** ——
+ * `apply` 根本不会被调用，也不打错误，只在 web boot 里留一句
+ * 「`1 entry did not activate`」。实测代价：设置页看不到插件栏、自更新端点 404，
+ * 而 `--dump-config` 里配置树明明有它（`- id: thinking-panel / name: dsh-thinking-panel`）。
+ *
+ * 系统提示词注入本来就是**可选能力**（缺了只该退化成「仅样式」），所以改成运行时可选获取 ——
+ * 见 createInjection() 里的 `ctx.systemPrompt?.section`。
+ * 对照：@copylee/dsh-computer-use 也是运行时 `ctx.inject(["systemPrompt"], …)`，不是静态 inject。
+ */
 
 /** 段落名（同一层内必须唯一）。 */
 export const SECTION_NAME = 'thinking-panel-language';

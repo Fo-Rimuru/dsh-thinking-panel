@@ -166,6 +166,7 @@ window.__ModuleLoader__.load({
       'think.done': '已思考',
       'think.stopped': '已停止',
       'think.seconds': '（用时 {s} 秒）',
+      'think.elapsed': '（已用时 {s} 秒）',
       'think.expand': '展开思考过程',
       'think.collapse': '收起思考过程',
       'plain.reasoning': '思考',
@@ -233,6 +234,7 @@ window.__ModuleLoader__.load({
       'think.done': 'Thought',
       'think.stopped': 'Stopped',
       'think.seconds': ' for {s}s',
+      'think.elapsed': ' ({s}s elapsed)',
       'think.expand': 'Expand reasoning',
       'think.collapse': 'Collapse reasoning',
       'plain.reasoning': 'Think',
@@ -952,7 +954,7 @@ window.__ModuleLoader__.load({
         : null;
       const seconds = liveSeconds !== null ? liveSeconds : props.seconds;
       const title = running
-        ? tr('think.running') + (liveSeconds !== null ? tr('think.seconds', { s: liveSeconds }) : '')
+        ? tr('think.running') + (liveSeconds !== null ? tr('think.elapsed', { s: liveSeconds }) : '')
         : stopped
           ? tr('think.stopped')
           : (seconds !== null && seconds !== undefined
@@ -1425,8 +1427,9 @@ window.__ModuleLoader__.load({
     /**
      * 带滑动条的数值行（目前只有「预览行数」用）。
      *
-     * 自绘 `<input type="range">` 而不是用官方组件：`ui-primitives` 只导出了 `Switch`，
-     * 拿不到官方的 Slider。样式尽量贴官方：品牌色圆点 + 细轨道。
+     * 自绘 `<input type="range">`：在 ui-chat 用到的那几十个 `ui-primitives` 导出里没见到 Slider
+     *（有 Icon* / MarkdownText / JsonBlock / DisclosureRow / Tooltip / TextShimmer / StateDot /
+     *  Modal / Button / Menu / Toast …，就是没有滑块），所以自己画。样式尽量贴官方。
      */
     function SliderRow(props) {
       const { title, desc, value, min, max, unit, onInput } = props;

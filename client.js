@@ -1074,6 +1074,7 @@ window.__ModuleLoader__.load({
      * 再用 CSS mask 盖上我们自己的图标。**补丁失败就保留齿轮**，不抛、不重试。
      */
     const NAV_CLASS = 'dst-nav-icon';
+    const NAV_SVG_CLASS = 'dst-nav-svg';
 
     function installNavIcon(labelOf) {
       if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => {};
@@ -1088,31 +1089,29 @@ window.__ModuleLoader__.load({
         try {
           const label = typeof labelOf === 'function' ? labelOf() : '';
           if (!label) return;
-          if (styleEl === null) {
-            const sample = document.querySelector('.dst-icon-sample svg');
-            if (sample === null) return;                 // 样板还没渲染：等下一次 MutationObserver
-            let svg = sample.outerHTML;
-            if (!/xmlns=/.test(svg)) svg = svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
-            const mask = `url("data:image/svg+xml,${encodeURIComponent(svg)}") center / contain no-repeat`;
-            styleEl = document.createElement('style');
-            styleEl.setAttribute('data-plugin', 'dsh-thinking-panel-nav');
-            styleEl.textContent = [
-              `.${NAV_CLASS}{display:flex;align-items:center}`,
-              /* ⚠️ 用**后代**选择器 + :has() 两层保险：
-               * DSH 的图标是 <svg> 外面还套了一层，只写 `>svg` 隐藏不掉它 ——
-               * 表现就是「图标和文字之间多出一段空位」（实测反馈）。 */
-              `.${NAV_CLASS} svg{display:none}`,
-              `.${NAV_CLASS}>*:has(svg){display:none}`,
-              `.${NAV_CLASS}::before{content:"";flex:none;width:16px;height:16px;margin-right:8px;`,
-              `background:currentColor;-webkit-mask:${mask};mask:${mask}}`,
-            ].join('');
-            document.head.appendChild(styleEl);
-          }
+          const sample = document.querySelector('.dst-icon-sample svg');
+          if (sample === null) return;                 // 样板还没渲染：等下一次 MutationObserver
           for (const dialog of document.querySelectorAll('[role="dialog"]')) {
             for (const button of dialog.querySelectorAll('nav button')) {
-              const mine = (button.textContent || '').trim() === label;
-              if (mine) button.classList.add(NAV_CLASS);
-              else button.classList.remove(NAV_CLASS);
+              if ((button.textContent || '').trim() !== label) continue;
+              /* ⚠️ 走「克隆真实 SVG 替换原图标」，不用 CSS mask。
+               * mask 那条路踩了两次坑：① data URI 里没有 currentColor 的上下文，
+               * DSH 的描边型图标会被渲染成**全透明**，mask 拿到空 alpha，那个位置一片空白；
+               * ② 原图标外面还套了一层，`>svg` 选不中它，于是新旧图标并排、中间留出空位。
+               * 直接换节点没这些问题：颜色（currentColor）、尺寸、描边全都跟原样走。 */
+              if (button.querySelector(`.${NAV_SVG_CLASS}`) !== null) continue;
+              const original = button.querySelector('svg');
+              if (original === null) continue;
+              const clone = sample.cloneNode(true);
+              clone.classList.add(NAV_SVG_CLASS);
+              try {
+                const box = original.getBoundingClientRect();
+                if (box && box.width > 0) {
+                  clone.setAttribute('width', String(Math.round(box.width)));
+                  clone.setAttribute('height', String(Math.round(box.height)));
+                }
+              } catch { /* 拿不到尺寸就用样板自带的 */ }
+              try { original.replaceWith(clone); } catch { /* 失败＝保留齿轮 */ }
             }
           }
         } catch { /* 补丁失败＝保留齿轮 */ }

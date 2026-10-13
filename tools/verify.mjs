@@ -995,8 +995,10 @@ check('自更新：没有流式 body 时退回一次性读取，但仍判大小'
 }
 check('自更新按需注入 webServer（缺了也不影响插件本身）',
   /ctx\.inject\(\['connection', 'webServer'\]/.test(indexSrc));
-check('Client 侧端点不可用时静默隐藏（不阻断插件）',
-  /catch\(\(\) => \{ \/\* 端点不可用：保持 null，整块不渲染 \*\/ \}\)/.test(clientSrc));
+check('端点失败时不再静默隐藏，而是把原因显示出来',
+  /update\.endpointDown/.test(clientSrc) && /setEndpointError\(String\(error/.test(clientSrc));
+check('端点回来之前显示「正在读取」占位（不闪空白）',
+  /update\.connecting/.test(clientSrc) && /if \(state === null\) \{/.test(clientSrc));
 check('更新改到 Host 半部时提示需要重启',
   /restartRequired/.test(selfUpdateSrc) && /update\.installedRestart/.test(clientSrc));
 check('回滚过的版本不会被自动装回来（holdVersion）',

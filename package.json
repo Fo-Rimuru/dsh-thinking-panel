@@ -1,6 +1,6 @@
 {
   "name": "dsh-thinking-panel",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DeepSeek 官方思考链完整复刻：思考内容跟随用户语言，并以自绘的 assistant-step 渲染器对齐官方思考面板（思考中多行滚动预览、展开看完整推理、左侧竖线、深度思考标题与耗时）。 Full DeepSeek thinking-chain parity: reasoning language follows the user, and a self-owned assistant-step renderer reproduces the official thinking panel.",
   "type": "module",
   "license": "MIT",

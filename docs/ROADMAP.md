@@ -43,6 +43,25 @@
 
 ## 已完成
 
+- **0.2.1** —— 实测与审查挖出来的修复
+  - **设置页整块空白**：`if (state === null) return null;` 之后又写了 3 个 hook → React #310
+    （hooks 数量变化）。已把 hook 全部移到提前返回之前，并加了 `SectionBoundary` 把错误显示到页面上
+  - **思考内容只剩一行**：排版容器用了 `flex + gap`，flex item 的 `min-height:auto`
+    把 5 行滚动预览压成 1 行 → 改回 block + 相邻兄弟 margin
+  - **插话后界面停在上一段**：真因是**面板长高**越过了 DSH 的 25px 跟随阈值
+    （`useScrollFollow(state.followingTail, 25)`），此后连 steering 都不再滚
+    （出厂源码 4979 行：`… && reading.followingTail`）。现在每次内容变化都顺手把外层带到底。
+    前两轮修的都是「展开过程组」，方向错了
+  - **设置导航图标**：DSH 的导航图标是 shell 里 `navIcon(id)` 的硬编码映射，第三方一律兜底齿轮
+    → 用 DOM 补丁克隆插件自己的 `IconThink` SVG 替换原图标（卸载时还原）
+  - **`useTurnData` 从 `useMemo` 内提到组件顶层**：它内部是 `useSyncExternalStore`，
+    放在提前 return 之后同样会触发 #310（与设置页同一个病根）
+  - **自动更新遇到开发目录只提示不自动装**：本机是 `link:` 安装，`packageDir` 就是工作区源码目录，
+    否则一发版就会覆盖未提交的改动
+  - 其余：mode 落盘改原子写且失败可见、`rollback` 补 semver 校验、
+    `Switch` 写入中禁用、复制按钮的 Enter 不再被标题行抢走、
+    `alive` 在 StrictMode 下复位、导航补丁死代码清理……
+
 - **0.2.0** —— 设置页独立成栏 + 四个开关 + 审查报告里的剩余修复
   - **设置左侧导航独立一栏**（`settings.section`，order 62）：不再挤在「通用设置」里
   - **语言注入开关**：Host 侧改成可运行时切换（先注销再注册 prompt section），状态存插件数据目录，

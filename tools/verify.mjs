@@ -685,9 +685,8 @@ check('「回到底部」只在没贴底时出现',
   /const backToBottom = atBottom \? null : h\('button'/.test(clientSrc));
 // 回归：只挂在思考面板里不够 —— 面板在「最终回答」阶段已经不再变化（running=false、text 不变），
 // 而内容还在长，那正是实测撞上的那条路。
-check('外层跟随的兜底挂在整个 assistant 节点上（不只是思考面板）',
-  /const stepRef = React\.useRef\(null\);/.test(clientSrc)
-  && /conversationScroller\(stepRef\.current\)/.test(clientSrc));
+check('不再往 assistant 节点上挂外层滚动兜底（该方案已撤销）',
+  !/stepRef/.test(clientSrc) && !/followingRef/.test(clientSrc));
 check('预览行数可配（滑动条 1–20，:root 上的 CSS 变量 + 记忆）',
   /var\(--dst-preview-lines,5\)/.test(clientSrc)
   && /setProperty\('--dst-preview-lines'/.test(clientSrc)
@@ -791,26 +790,18 @@ const runningProps = () => baseProps({
     dom.body.dispatched?.includes('beforematch') === true);
 }
 
-/* --- 展开后把外层会话带回底部（「插话后界面停在上一段」） ------------------ */
+/* --- 插件不碰外层滚动（反向断言） ---------------------------------------- */
+/* 这里原本有五条断言，验证「插件把外层会话滚回底部」的几种做法。
+ * 代码审查（对照出厂源码）判定这条路走不通，整段撤掉了 —— 见 docs/ROADMAP.md 的待定位条目。
+ * 现在反过来钉住：插件**只滚自己的面板**，绝不写外层滚动容器的位置。 */
 {
-  // 回归①：早先沿 parentElement 找「第一个可滚动祖先」，先撞上过程组自己的
-  // [data-step-process-body]（同样 overflow:auto），于是把组体滚到底、外层纹丝不动。
-  check('外层滚动容器用 data-conversation-scroll 定位',
-    /closest\('\[data-conversation-scroll\]'\)/.test(clientSrc)
-    && !/function followOuterScroll/.test(clientSrc));
-  // 回归②：早先在**展开之后**才判断是否贴着底部 —— 那时内容已长高几百像素，
-  // 守卫反而把正确的修复挡掉；所以必须在展开前采样，容差也要放宽到近一屏。
-  check('跟随状态在展开之前采样，容差按近一屏算',
-    /const following = isFollowingTail\(conversationScroller\(el\)\);/.test(clientSrc)
-    && /node\.clientHeight \* 0\.9/.test(clientSrc));
-  check('展开后把外层带回底部（顺带触发 scroll 事件让 DSH 恢复跟随）',
-    /scrollToTail\(conversationScroller\(el\)\)/.test(clientSrc));
-  // 回归③（真因）：面板**长高**本身就会越过 DSH 的 25px 跟随阈值，之后连插话都不滚
-  //（出厂 4979 行：steering 变化时也带 `&& reading.followingTail`）。
-  // 所以每次内容变化都要顺手把外层带到底，而不是只在展开那一刻做一次。
-  check('面板长高时同步把外层带到底（不只展开那一次）',
-    /const outer = conversationScroller\(el\);/.test(clientSrc)
-    && /if \(isFollowingTail\(outer\)\) scrollToTail\(outer\);/.test(clientSrc));
+  check('插件不再写外层会话的滚动位置',
+    !/function scrollToTail/.test(clientSrc)
+    && !/function conversationScroller/.test(clientSrc)
+    && !/function isFollowingTail/.test(clientSrc));
+  check('撤掉的原因留在代码里（免得以后又有人「顺手修一下」）',
+    /conversationScroller \/ isFollowingTail \/ scrollToTail/.test(clientSrc)
+    && /movedByReader/.test(clientSrc));
 }
 {
   // (c) 已结束的轮次 → 不动作（那是 DSH 自己的收起规则，四种模式一致）

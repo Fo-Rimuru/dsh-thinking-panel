@@ -477,43 +477,12 @@ window.__ModuleLoader__.load({
       return previewLines;
     }
 
-    /**
-     * 出厂的会话滚动容器带 `data-conversation-scroll`（在 ui-chat-client.js 里就是这么找的），
-     * 用它定位是**唯一可靠**的方式。
-     *
-     * ⚠️ 早先是沿 `parentElement` 往上找「第一个可滚动祖先」—— 结果先撞上过程组自己的
-     * `[data-step-process-body]`（同样是 `overflow:auto`），于是把**组体**滚到底、
-     * 外层纹丝不动，用户看到的还是「界面停在上一段」（实测反馈）。
-     */
-    function conversationScroller(el) {
-      try {
-        if (el && typeof el.closest === 'function') {
-          const marked = el.closest('[data-conversation-scroll]');
-          if (marked !== null && marked !== undefined) return marked;
-        }
-      } catch { /* ignore */ }
-      return null;
-    }
-
-    /**
-     * 是否「还在跟着最新内容」。
-     *
-     * 容差取**近一屏**而不是几十像素：用户插话时通常只是停在上一段（差不到一屏），
-     * 而真正在翻历史的人会滚得远得多 —— 用几十像素的容差会把前一种情况误判成「在回看」，
-     * 于是修复被自己的守卫挡掉（实测踩过）。
-     */
-    function isFollowingTail(node) {
-      if (node === null || node === undefined) return false;
-      try {
-        const slack = node.clientHeight > 0 ? node.clientHeight * 0.9 : 400;
-        return node.scrollHeight - node.scrollTop - node.clientHeight < slack;
-      } catch { return false; }
-    }
-
-    function scrollToTail(node) {
-      if (node === null || node === undefined) return;
-      try { node.scrollTop = node.scrollHeight; } catch { /* ignore */ }
-    }
+    /* ⚠️ 这里曾经有三个 helper：`conversationScroller` / `isFollowingTail` / `scrollToTail`，
+     * 用来在插件侧主动把**外层会话**滚到底。代码审查（对照出厂源码）判定这条路走不通 ——
+     * 出厂有完整的滚动策略层（`useChatReading` / `ChatViewport` / `ScrollFollow`），
+     * 插件直接写 `scrollTop` 会被它的 `movedByReader`（只看位置差 > 0.5px）记成「用户自己滚的」，
+     * 进而让它在 `scrollend` 判出「偏离目标 > 25px」而**主动释放跟随**。
+     * 撤掉之后插件只在**自己的面板内部**滚动，不再碰外层。详见 docs/ROADMAP.md。 */
 
     /**
      * 展开包住本面板的「过程组」，让被 hidden="until-found" 挡住的思考面板露出来。
@@ -810,28 +779,9 @@ window.__ModuleLoader__.load({
         // 非真实 DOM（自检的 mock 环境、降级路径）：没有可探测的祖先，直接放弃。
         if (el === null || typeof el.closest !== 'function') return undefined;
 
-        /* ⚠️ 必须在**展开之前**记录外层是否在跟随：展开会让内容瞬间长高几百像素，
-         * 之后再判断就已经「不接近底部」了，守卫反而会把正确的修复挡掉（实测踩过）。 */
-        const following = isFollowingTail(conversationScroller(el));
-
-        /* 展开之后把外层带回底部：既修正视觉位置，也触发一次 scroll 事件，
-         * 让 DSH 自己的跟随逻辑重新判定「在底部」而恢复跟随。
-         * ⚠️ 首次成功和**重试成功**都必须走这一步 —— 实测撞上的恰恰是重试那条路径
-         *（面板挂载时官方还没给组体打 hidden），上一版只在首次分支里调用，等于没修（审查发现）。 */
-        const settle = () => {
-          if (!following) return;
-          const stick = () => scrollToTail(conversationScroller(el));
-          if (typeof requestAnimationFrame === 'function') {
-            requestAnimationFrame(() => requestAnimationFrame(stick));
-          } else {
-            stick();
-          }
-        };
-
         if (revealProcessGroup(el)) {
           revealed.current = true;
           diag.revealHits += 1;
-          settle();
           return undefined;
         }
 
@@ -848,7 +798,7 @@ window.__ModuleLoader__.load({
         const retry = () => {
           timer = 0;
           if (revealed.current) return;
-          if (revealProcessGroup(rootRef.current)) { revealed.current = true; diag.revealHits += 1; settle(); return; }
+          if (revealProcessGroup(rootRef.current)) { revealed.current = true; diag.revealHits += 1; return; }
           if (++tries >= 8) { diag.revealMisses += 1; return; }
           timer = setTimeout(retry, 250);
         };
@@ -884,13 +834,6 @@ window.__ModuleLoader__.load({
       // 共用同一个 scrollRef，所以只要不提前返回，两端都会自动贴到最新内容。
       React.useEffect(() => {
         const el = scrollRef.current;
-        /* 面板长高会让**外层**的跟随失效：DSH 的跟随阈值只有 25px（出厂
-         * `useScrollFollow(state.followingTail, 25)`），我们一次流式更新就可能长几十像素 ——
-         * 一超阈值它就认定「用户在往上读」，此后连插话都不再自动滚
-         *（出厂源码 4979 行：steering 变化时也带着 `&& reading.followingTail`）。
-         * 所以在每次内容变化后，只要外层仍在底部附近，就顺手把它带到底。 */
-        const outer = conversationScroller(el);
-        if (isFollowingTail(outer)) scrollToTail(outer);
         if (el === null) return;
         if (FOLLOW === 'top') {
           if (!running && !stick.current) return;
@@ -1080,36 +1023,15 @@ window.__ModuleLoader__.load({
        * 出厂 AssistantNodeView 也是把 `const tail = useTurnData('turn-tail')` 放在顶层。 */
       const turnTail = typeof useTurnData === 'function' ? useTurnData('turn-tail') : undefined;
 
-      /**
-       * 外层跟随的兜底 —— **整个 assistant 节点**每次渲染都检查一次。
-       *
-       * ⚠️ 判定「用户是否在跟随」**不能只看距离**：DSH 自己用 25px 阈值
-       *（`useScrollFollow(state.followingTail, 25)`），而我们一次「输出一大堆」就能长几百像素，
-       * 一超阈值就被当成「用户在往上读」，之后连插话都不再滚
-       *（出厂 4979 行：`… && reading.followingTail`）。把容差调大只是往后拖，
-       * 「一次长过一屏」照样失效。
-       *
-       * 所以改成**跟踪用户意图**：只有用户真的滚动过、并且滚出了底部，才停止跟随；
-       * 内容长高本身不算。scroll 事件里维护这个意图，每次渲染后据此决定要不要贴底。
-       */
-      const stepRef = React.useRef(null);
-      const followingRef = React.useRef(true);
-      React.useEffect(() => {
-        const outer = conversationScroller(stepRef.current);
-        if (outer === null || typeof outer.addEventListener !== 'function') return undefined;
-        // 初值按挂载那一刻的实际情况定（用户可能正停在历史里看，不能把他拽走）
-        followingRef.current = isFollowingTail(outer);
-        const onScroll = () => { followingRef.current = isFollowingTail(outer); };
-        outer.addEventListener('scroll', onScroll, { passive: true });
-        return () => {
-          try { outer.removeEventListener('scroll', onScroll); } catch { /* ignore */ }
-        };
-      }, []);
-      React.useEffect(() => {
-        const outer = conversationScroller(stepRef.current);
-        if (outer === null) return;
-        if (followingRef.current) scrollToTail(outer);
-      });
+      /* ⚠️ 这里曾经挂过一段「外层跟随兜底」：每次渲染都检查外层滚动容器、必要时写 scrollTop。
+       * 代码审查（对照出厂源码）推翻了它：出厂早有一套完整的滚动策略层
+       *（`useChatReading` / `ChatViewport` / `ScrollFollow`），而插件是在它之外**手动写滚动位置**。
+       * 出厂的 `ChatViewport.readScroll()` 判定 `movedByReader` 只看位置差 > 0.5px，**不区分是不是
+       * 程序化写入** —— 于是插件这一写会被记成「用户自己滚的」；而 `ScrollFollow.sample()` 又只在
+       * `movedByReader && !animating` 时更新意图，DSH 有在飞的平滑目标时会在 `scrollend` 判出
+       * 「偏离目标 > 25px」→ **主动释放跟随**。
+       * 结果是：修好了一种「不跟随」，制造了「把回看的用户拽到底」和「释放跟随」两种新问题。
+       * 已经整段撤掉，改由 docs/ROADMAP.md 记录待定位。 */
 
       // 文件提及（与出厂同构：仅在 turn 关闭且有 finalNode 时可用）
       const mentions = React.useMemo(() => {
@@ -1221,7 +1143,7 @@ window.__ModuleLoader__.load({
       /* 与出厂 AssistantMarkdown 同构：外面套 .dst-root（字号/行高/正文色基线）与
        * .dst-body（16px 块间距）。少了它们，多块消息的行距与段间距会和出厂不一样。 */
       return h(ThinkingBoundary, { blocks },
-        h('div', { ref: stepRef, className: 'dst-root', 'data-streaming': running || undefined },
+        h('div', { className: 'dst-root', 'data-streaming': running || undefined },
           h('div', { className: 'dst-body' },
             stoppedBadge === null ? out : out.concat([stoppedBadge]))));
     }

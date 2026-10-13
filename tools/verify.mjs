@@ -65,7 +65,11 @@ console.log('\n[1] Host 半部 (index.js)');
 const host = await import(path.join(pkgDir, 'index.js').replace(/\\/g, '/').replace(/^/, 'file:///'));
 
 check('导出 apply 函数', typeof host.apply === 'function');
-check('inject 含 systemPrompt', Array.isArray(host.inject) && host.inject.includes('systemPrompt'));
+/* 反向断言：**不要**用静态 inject 做硬门禁 —— 服务不满足时插件会「静默不激活」
+ *（apply 根本不被调用，只在 web boot 里留一句 `1 entry did not activate`）。
+ * 对照 @copylee/dsh-computer-use：它用运行时 ctx.inject(["systemPrompt"], …)。 */
+check('不用静态 inject 硬门禁（改成运行时可选获取）',
+  host.inject === undefined && /ctx\.systemPrompt\?\.section/.test(indexSrc));
 check('SECTION_ORDER 是有限数', Number.isFinite(host.SECTION_ORDER));
 check('SECTION_ORDER 排在系统提示词最末（> DEPLOYMENT_PERSONA_SUFFIX 10200）',
   host.SECTION_ORDER > 10200, `order=${host.SECTION_ORDER}`);

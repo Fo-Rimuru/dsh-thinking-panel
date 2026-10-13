@@ -19,7 +19,7 @@
  * 另外本文件还负责注册**自更新**的 HTTP 端点（见文件末尾）：更新要读写文件系统，
  * 只能跑在 Host 侧；Client 半部通过这几个端点读状态、触发动作。
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -196,6 +196,18 @@ function pluginDataDir() {
   return join(dshHome, 'plugin-data', 'dsh-thinking-panel');
 }
 
+/**
+ * packageDir 是不是「开发目录」（`link:` 安装到工作区源码，通常带 `.git`）。
+ *
+ * ⚠️ 这个判断必须有：本机就是 `link:` 安装，`import.meta.url` 解析出来的 `packageDir`
+ * **就是工作区源码目录**。默认开启的自动更新会在启动 8 秒后把 registry 上的版本
+ * **直接写进源码目录**，把未提交的改动覆盖掉（代码审查发现）。
+ * 手动点「更新」不拦 —— 那是用户的明确动作。
+ */
+function isDevelopmentDir(packageDir) {
+  try { return existsSync(join(packageDir, '.git')); } catch { return false; }
+}
+
 /** 把 mode 存在插件数据目录里；`cordis.patch.yml` 只提供首次运行的默认值。 */
 function createModeStore(fallback) {
   const file = join(pluginDataDir(), 'settings.json');
@@ -209,15 +221,23 @@ function createModeStore(fallback) {
     /** @returns {{ok:boolean, mode?:string, error?:string}} */
     set: (mode) => {
       if (!MODES.includes(mode)) return { ok: false, error: `unknown mode: ${String(mode)}` };
+      const previous = value;
       value = mode;
       try {
+        /* 原子写（tmp + rename），与 self-update.js 的 saveState 一致：
+         * 裸 writeFileSync 被中断会留下截断的 JSON，下次解析失败被静默吞掉 ——
+         * 表现是「用户明确关掉的注入，重启后被悄悄打开」，而且坏文件永不自愈。 */
         mkdirSync(dirname(file), { recursive: true });
-        writeFileSync(file, `${JSON.stringify({ mode }, null, 2)}\n`);
+        const temp = `${file}.tmp`;
+        writeFileSync(temp, `${JSON.stringify({ mode }, null, 2)}\n`);
+        renameSync(temp, file);
+        return { ok: true, mode, persisted: true };
       } catch (error) {
-        // 落盘失败不阻止本次生效，只是重启后会回到旧值
+        // 落盘失败：内存值仍然生效（本次会话有效），但必须如实告诉客户端「没存住」
+        value = previous;
         try { console.warn(`[dsh-thinking-panel] 设置落盘失败：${error.message}`); } catch { /* ignore */ }
+        return { ok: false, mode: previous, persisted: false, error: `设置落盘失败：${error.message}` };
       }
-      return { ok: true, mode };
     },
   };
 }
@@ -359,9 +379,14 @@ function registerUpdateRoutes(ctx, settings = {}) {
     );
 
     /* 自动更新：启动后延迟跑一次，用户不用点任何东西。
-     * 关掉开关的人在 autoUpdate() 里会直接短路；失败也不打扰用户 —— 状态里能看到 lastError。 */
+     * 关掉开关的人在 autoUpdate() 里会直接短路；失败也不打扰用户 —— 状态里能看到 lastError。
+     * ⚠️ 但**开发目录绝不自动更新**：那会把 registry 上的版本写进工作区源码（见 isDevelopmentDir）。 */
+    const development = isDevelopmentDir(packageDir);
     try {
-      if (updater.status().autoUpdate) {
+      if (development) {
+        console.log('[dsh-thinking-panel] 检测到开发目录（link: 安装），已跳过自动更新；'
+          + '要升级请手动点设置页里的「更新」');
+      } else if (updater.status().autoUpdate) {
         const timer = setTimeout(() => {
           updater.autoUpdate().then((result) => {
             if (result && result.ok && result.version) {

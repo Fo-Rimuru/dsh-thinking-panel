@@ -249,10 +249,14 @@ window.__ModuleLoader__.load({
   background:var(--dsw-alias-label-tertiary,var(--dsw-alias-border-l2));
   background-clip:padding-box}
 /* 与出厂 AssistantMarkdown.module.css 同构的排版基线：
-   .root 给字号/行高/正文色，.body 给 16px 块间距。 */
+   .root 给字号/行高/正文色，.body 给 16px 块间距。
+   ⚠️ 刻意用 block + 相邻兄弟 margin，**不用 flex + gap**：
+   flex item 的 min-height:auto 会在容器高度受限时把它压扁 —— 实测反馈就是
+   「思考内容只剩一行」（5 行滚动预览被压成 1 行）。block 布局没有这个副作用。 */
 .dst-root{font-size:var(--dsh-content-font-size,14px);line-height:calc(24px + var(--dsh-content-font-delta,0px));
-  color:var(--dsw-alias-label-primary);flex-direction:column;display:flex;min-width:0}
-.dst-body{flex-direction:column;gap:16px;display:flex;min-width:0}
+  color:var(--dsw-alias-label-primary);display:block;min-width:0}
+.dst-body{display:block;min-width:0}
+.dst-body>*+*{margin-top:16px}
 /* 无障碍：屏幕阅读器能听出「正在思考」（出厂在同一位置用 row.running） */
 .dst-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0 0 0 0);white-space:nowrap;border:0}
@@ -668,18 +672,23 @@ window.__ModuleLoader__.load({
          * 之后再判断就已经「不接近底部」了，守卫反而会把正确的修复挡掉（实测踩过）。 */
         const following = isFollowingTail(conversationScroller(el));
 
+        /* 展开之后把外层带回底部：既修正视觉位置，也触发一次 scroll 事件，
+         * 让 DSH 自己的跟随逻辑重新判定「在底部」而恢复跟随。
+         * ⚠️ 首次成功和**重试成功**都必须走这一步 —— 实测撞上的恰恰是重试那条路径
+         *（面板挂载时官方还没给组体打 hidden），上一版只在首次分支里调用，等于没修（审查发现）。 */
+        const settle = () => {
+          if (!following) return;
+          const stick = () => scrollToTail(conversationScroller(el));
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => requestAnimationFrame(stick));
+          } else {
+            stick();
+          }
+        };
+
         if (revealProcessGroup(el)) {
           revealed.current = true;
-          /* 展开之后把外层带回底部：既修正视觉位置，也触发一次 scroll 事件，
-           * 让 DSH 自己的跟随逻辑重新判定「在底部」而恢复跟随。 */
-          if (following) {
-            const stick = () => scrollToTail(conversationScroller(el));
-            if (typeof requestAnimationFrame === 'function') {
-              requestAnimationFrame(() => requestAnimationFrame(stick));
-            } else {
-              stick();
-            }
-          }
+          settle();
           return undefined;
         }
 
@@ -696,7 +705,7 @@ window.__ModuleLoader__.load({
         const retry = () => {
           timer = 0;
           if (revealed.current) return;
-          if (revealProcessGroup(rootRef.current)) { revealed.current = true; return; }
+          if (revealProcessGroup(rootRef.current)) { revealed.current = true; settle(); return; }
           if (++tries >= 8) return;
           timer = setTimeout(retry, 250);
         };
@@ -732,6 +741,13 @@ window.__ModuleLoader__.load({
       // 共用同一个 scrollRef，所以只要不提前返回，两端都会自动贴到最新内容。
       React.useEffect(() => {
         const el = scrollRef.current;
+        /* 面板长高会让**外层**的跟随失效：DSH 的跟随阈值只有 25px（出厂
+         * `useScrollFollow(state.followingTail, 25)`），我们一次流式更新就可能长几十像素 ——
+         * 一超阈值它就认定「用户在往上读」，此后连插话都不再自动滚
+         *（出厂源码 4979 行：steering 变化时也带着 `&& reading.followingTail`）。
+         * 所以在每次内容变化后，只要外层仍在底部附近，就顺手把它带到底。 */
+        const outer = conversationScroller(el);
+        if (isFollowingTail(outer)) scrollToTail(outer);
         if (el === null) return;
         if (FOLLOW === 'top') {
           if (!running && !stick.current) return;
@@ -791,6 +807,9 @@ window.__ModuleLoader__.load({
         title: expanded ? tr('think.collapse') : tr('think.expand'),
         onClick: toggle,
         onKeyDown: (e) => {
+          /* 键盘焦点落在子元素（复制按钮）上时不要抢它的 Enter/Space：
+           * 否则按 Enter 想复制，结果被这里 preventDefault 掉、还顺手切换了展开态。 */
+          if (e.target !== e.currentTarget) return;
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
         },
       }, [
@@ -867,6 +886,13 @@ window.__ModuleLoader__.load({
         && turnProcess.spec.inlineReasoning && !turnProcess.open;
       const reveal = React.useCallback(() => { if (turnProcess) turnProcess.setOpen(true); }, [turnProcess]);
 
+      /* ⚠️ `tail` 必须是**组件主体里的无条件 hook**，绝不能塞进下面的 useMemo 里：
+       * useTurnData 内部是 useSyncExternalStore（出厂的 useTurnDataValue），而它原本还位于
+       * 两道提前 return 之后 —— turn 从 open→closed 时这次渲染就多一个 hook，React 会抛
+       * #310，生产下 hook 槽位错位（审查发现；与设置页那次是同一个病根）。
+       * 出厂 AssistantNodeView 也是把 `const tail = useTurnData('turn-tail')` 放在顶层。 */
+      const turnTail = typeof useTurnData === 'function' ? useTurnData('turn-tail') : undefined;
+
       // 文件提及（与出厂同构：仅在 turn 关闭且有 finalNode 时可用）
       const mentions = React.useMemo(() => {
         try {
@@ -877,12 +903,11 @@ window.__ModuleLoader__.load({
           /* 与出厂同构：只有「收尾的那一节点」才解析文件提及。少了这道守卫，
            * 非收尾步骤也会解析一遍 —— 而同一个节点会以 reasoning / response
            * 两种 groupPart 各渲染一次。 */
-          const tail = typeof useTurnData === 'function' ? useTurnData('turn-tail') : undefined;
-          const closing = tail && tail.closing ? tail.closing.finalNode : undefined;
+          const closing = turnTail && turnTail.closing ? turnTail.closing.finalNode : undefined;
           if (closing !== undefined && closing !== null && closing.seq !== data.finalNode.seq) return undefined;
           return fileMentions({ turn, seq: data.finalNode.seq, openFile: props.openFile });
         } catch { return undefined; }
-      }, [fileMentions, node, data.finalNode, props.openFile, useTurnData]);
+      }, [fileMentions, node, data.finalNode, props.openFile, turnTail]);
 
       const labels = React.useMemo(() => markdownLabels(tr), [tr]);
       // 与出厂同构：本地绝对路径走鉴权文件路由，而不是直接拼 URL
@@ -1001,7 +1026,7 @@ window.__ModuleLoader__.load({
      * 设置里有两行，抽出来也顺便保证两行与同页官方条目同款。
      */
     function ToggleRow(props) {
-      const { title, desc, checked, label, onLabel, offLabel, onChange } = props;
+      const { title, desc, checked, label, onLabel, offLabel, onChange, disabled } = props;
       const fallbackToggle = h('button', {
         key: 'toggle',
         type: 'button',
@@ -1009,6 +1034,7 @@ window.__ModuleLoader__.load({
         'aria-checked': checked,
         'aria-label': label,
         title: checked ? offLabel : onLabel,
+        disabled: disabled === true,
         onClick: () => onChange(!checked),
         style: {
           flex: 'none', cursor: 'pointer', borderRadius: '4096px',
@@ -1044,6 +1070,10 @@ window.__ModuleLoader__.load({
             checked,
             label,
             title: checked ? offLabel : onLabel,
+            /* 写入进行中时禁用：官方 Switch 支持 disabled（注释里写明 owners also set it
+             * while a write is in flight）。不传的话点了会被 run() 的重入守卫静默吞掉 ——
+             * 开关纹丝不动、也没任何提示。 */
+            disabled: disabled === true,
             onChange,
           })
           : fallbackToggle,
@@ -1090,12 +1120,10 @@ window.__ModuleLoader__.load({
      * 所以只能像壁纸引擎 / 电脑控制那样做 DOM 补丁：给标签文字匹配的按钮打个 class，
      * 再用 CSS mask 盖上我们自己的图标。**补丁失败就保留齿轮**，不抛、不重试。
      */
-    const NAV_CLASS = 'dst-nav-icon';
     const NAV_SVG_CLASS = 'dst-nav-svg';
 
     function installNavIcon(labelOf) {
       if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => {};
-      let styleEl = null;
       let observer = null;
       let frame = 0;
       let disposed = false;
@@ -1128,7 +1156,10 @@ window.__ModuleLoader__.load({
                   clone.setAttribute('height', String(Math.round(box.height)));
                 }
               } catch { /* 拿不到尺寸就用样板自带的 */ }
-              try { original.replaceWith(clone); } catch { /* 失败＝保留齿轮 */ }
+              try {
+                original.replaceWith(clone);
+                clone.__dstOriginalSvg = original;    // 卸载时换回去
+              } catch { /* 失败＝保留齿轮 */ }
             }
           }
         } catch { /* 补丁失败＝保留齿轮 */ }
@@ -1148,9 +1179,13 @@ window.__ModuleLoader__.load({
         disposed = true;
         if (frame !== 0) { try { cancelAnimationFrame(frame); } catch { /* ignore */ } }
         try { if (observer) observer.disconnect(); } catch { /* ignore */ }
-        try { if (styleEl) styleEl.remove(); } catch { /* ignore */ }
-        try { document.querySelectorAll(`.${NAV_CLASS}`).forEach((el) => el.classList.remove(NAV_CLASS)); }
-        catch { /* ignore */ }
+        /* 换进去的图标在插件卸载/禁用时换回原来的（否则齿轮回不来，得重开设置面板才自愈）。 */
+        try {
+          document.querySelectorAll(`.${NAV_SVG_CLASS}`).forEach((node) => {
+            const original = node.__dstOriginalSvg;
+            if (original && typeof node.replaceWith === 'function') node.replaceWith(original);
+          });
+        } catch { /* ignore */ }
       };
     }
 
@@ -1226,7 +1261,13 @@ window.__ModuleLoader__.load({
        * 整个设置页被错误边界兜成一片空白。
        */
       const alive = React.useRef(true);
-      React.useEffect(() => () => { alive.current = false; }, []);
+      React.useEffect(() => {
+        /* ⚠️ 进入时先置 true：StrictMode / 热更新会 mount → cleanup → mount，
+         * 不复位的话第二次挂载后 alive 恒为 false → finally 里的 setBusy('') 永不执行，
+         * 按钮就永久 disabled、提示永不显示（审查发现）。 */
+        alive.current = true;
+        return () => { alive.current = false; };
+      }, []);
       const inFlight = React.useRef(false);
 
       const call = React.useCallback(async (method, body) => {
@@ -1249,6 +1290,15 @@ window.__ModuleLoader__.load({
           .catch(() => { /* 端点不可用：保持 null，整块不渲染 */ });
         return () => { alive = false; };
       }, [call]);
+
+      /* ⚠️ 记住「关掉之前是哪个模式」：Host 有四种（auto/zh/en/off），而 UI 只有两态。
+       * 用户把 cordis.patch.yml 配成 zh 之后，把开关关一下再开，不该被静默改成 auto
+       * （审查发现）。这个 ref 必须在下面的提前返回**之前**声明。 */
+      const lastOnMode = React.useRef('auto');
+      if (state !== null) {
+        const current = typeof state.mode === 'string' ? state.mode : 'auto';
+        if (current !== 'off') lastOnMode.current = current;
+      }
 
       // ⚠️ 这个提前返回必须放在**所有 hook 之后**
       if (state === null) return null;
@@ -1322,7 +1372,8 @@ window.__ModuleLoader__.load({
           label: t('settings.inject.toggle'),
           onLabel: t('settings.on'),
           offLabel: t('settings.off'),
-          onChange: (next) => run('mode', { mode: next ? 'auto' : 'off' }),
+          onChange: (next) => run('mode', { mode: next ? (lastOnMode.current || 'auto') : 'off' }),
+          disabled: busy !== '',
         }),
         h(ToggleRow, {
           key: 'auto-update',
@@ -1333,6 +1384,7 @@ window.__ModuleLoader__.load({
           onLabel: t('settings.on'),
           offLabel: t('settings.off'),
           onChange: (next) => run('auto-update', { enabled: next }),
+          disabled: busy !== '',
         }),
         h('div', { key: 'row', className: 'dst-update-row' }, [
           h('span', { key: 'ver', className: 'dst-update-ver' }, `v${state.runningVersion}`),

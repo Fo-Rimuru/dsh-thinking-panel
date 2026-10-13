@@ -652,7 +652,9 @@ const baseProps = (over = {}) => ({
   check('设置页标题用 locale 文案', JSON.stringify(flat).includes('深度思考面板'));
 }
 check('注入开关走 Host 的 mode 端点（不存本地）',
-  /run\('mode', \{ mode: next \? 'auto' : 'off' \}\)/.test(clientSrc));
+  /run\('mode', \{ mode: next \? \(lastOnMode\.current \|\| 'auto'\) : 'off' \}\)/.test(clientSrc));
+check('关掉再打开会恢复成关掉之前的模式（不把 zh/en 静默改成 auto）',
+  /const lastOnMode = React\.useRef\('auto'\);/.test(clientSrc));
 check('自动更新开关走 auto-update 端点',
   /run\('auto-update', \{ enabled: next \}\)/.test(clientSrc));
 check('回退按钮显示 Host 算好的目标版本',
@@ -662,7 +664,9 @@ check('兼容性提示会显示到设置页（不再只打控制台）',
 check('思考面板有复制按钮', /dst-think-copy/.test(clientSrc) && /navigator\.clipboard/.test(clientSrc));
 check('排版容器与出厂同构（.root 字号行高 / .body 16px 间距）',
   /\.dst-root\{font-size:var\(--dsh-content-font-size/.test(clientSrc)
-  && /\.dst-body\{flex-direction:column;gap:16px/.test(clientSrc));
+  && /\.dst-body>\*\+\*\{margin-top:16px\}/.test(clientSrc));
+check('排版容器刻意不用 flex+gap（flex item 的 min-height:auto 会把 5 行预览压成 1 行）',
+  !/\.dst-body\{flex-direction:column;gap:16px/.test(clientSrc));
 check('负边距只在插件自己的正文容器里补偿（不再全局）',
   /\.dst-body>\[data-turn-process-inline\]\[hidden\]\{margin-bottom:-16px\}/.test(clientSrc));
 check('未知块传的是包装体里的真实载荷', /const payload = block\.block !== undefined \? block\.block : block;/.test(clientSrc));
@@ -771,6 +775,12 @@ const runningProps = () => baseProps({
     && /node\.clientHeight \* 0\.9/.test(clientSrc));
   check('展开后把外层带回底部（顺带触发 scroll 事件让 DSH 恢复跟随）',
     /scrollToTail\(conversationScroller\(el\)\)/.test(clientSrc));
+  // 回归③（真因）：面板**长高**本身就会越过 DSH 的 25px 跟随阈值，之后连插话都不滚
+  //（出厂 4979 行：steering 变化时也带 `&& reading.followingTail`）。
+  // 所以每次内容变化都要顺手把外层带到底，而不是只在展开那一刻做一次。
+  check('面板长高时同步把外层带到底（不只展开那一次）',
+    /const outer = conversationScroller\(el\);/.test(clientSrc)
+    && /if \(isFollowingTail\(outer\)\) scrollToTail\(outer\);/.test(clientSrc));
 }
 {
   // (c) 已结束的轮次 → 不动作（那是 DSH 自己的收起规则，四种模式一致）

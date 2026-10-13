@@ -86,6 +86,7 @@ window.__ModuleLoader__.load({
       revealHits: 0,        // 自动展开过程组成功次数
       revealMisses: 0,      // 自动展开重试到放弃的次数
       navIcon: 'unknown',   // 导航图标补丁：applied / missing / unknown
+      seenNodes: new Set(), // 渲染计数去重用（同一节点会以两种 groupPart 各渲染一次）
       since: Date.now(),
     };
 
@@ -798,8 +799,24 @@ window.__ModuleLoader__.load({
         const retry = () => {
           timer = 0;
           if (revealed.current) return;
-          if (revealProcessGroup(rootRef.current)) { revealed.current = true; diag.revealHits += 1; return; }
-          if (++tries >= 8) { diag.revealMisses += 1; return; }
+          const body = typeof rootRef.current?.closest === 'function'
+            ? rootRef.current.closest('[data-step-process-body]')
+            : null;
+          /* 「组现在还展开着」有两种含义，得分开对待：
+           *  ① 本来就展开且不会折叠（详细 / 完全展开模式）→ 重试满就**安静退出，不记 miss**
+           *    （否则自检显示「自动展开 0 / 1」，用户以为坏了 —— 审查发现）；
+           *  ② 官方还没给它打 hidden（layout effect 晚一帧）→ **必须继续重试**，这正是当初要修的场景。 */
+          if (body === null || typeof body.hasAttribute !== 'function') return;
+          if (!body.hasAttribute('hidden')) {
+            if (++tries >= 8) return;                 // ① 安静放弃
+          } else if (revealProcessGroup(rootRef.current)) {
+            revealed.current = true;
+            diag.revealHits += 1;
+            return;
+          } else if (++tries >= 8) {
+            diag.revealMisses += 1;                   // 组确实收起、但揭示失败 → 真失败
+            return;
+          }
           timer = setTimeout(retry, 250);
         };
         timer = setTimeout(retry, 250);
@@ -864,9 +881,14 @@ window.__ModuleLoader__.load({
       const updateCanScrollRef = React.useRef(null);
       updateCanScrollRef.current = () => {
         const el = scrollRef.current;
-        if (el === null || expanded) { setCanScroll(false); setAtBottom(true); return; }
-        setCanScroll(el.scrollHeight > el.clientHeight + 1);
-        setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+        if (el === null) { setCanScroll(false); setAtBottom(true); return; }
+        /* ⚠️ 不再对 `expanded` 短路：展开态（`.dst-think-body`，`max-height:min(60vh,640px)`
+         * + `overflow-y:auto`）**必然可滚动**，而这里若无条件置 `atBottom=true`，
+         * 就会在每次 text 变化时把用户刚上翻的状态覆盖掉 —— 「回到底部」按钮出现即消失、
+         * 基本点不到，而长推理恰恰是这功能的目标场景（审查发现）。按实际位置算就好。 */
+        const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+        setCanScroll(gap > 1);
+        setAtBottom(gap < 24);
       };
       useLayout(() => { updateCanScrollRef.current(); }, [text, expanded, running]);
       React.useEffect(() => {
@@ -994,8 +1016,18 @@ window.__ModuleLoader__.load({
         ? props.pluginT
         : (typeof props.t === 'function' ? props.t : IDENTITY_T);
       const on = useEnabled();
-      // 自检计数放在 effect 里（render 期间不改模块状态 —— 那是之前 timings 踩过的坑）
-      React.useEffect(() => { diag.rendered += 1; }, []);
+      /* 自检计数放在 effect 里（render 期间不改模块状态 —— 那是之前 timings 踩过的坑）。
+       * ⚠️ 同一个节点会以 reasoning / response 两种 groupPart 各渲染一次，虚拟滚动重挂载还会再计，
+       * 所以按 node key 去重，否则这个诊断数字明显大于实际节点数（审查发现）。 */
+      React.useEffect(() => {
+        const id = (node && node.key)
+          || (data.turn !== undefined || data.step !== undefined ? `${data.turn}:${data.step}` : null);
+        if (id === null) return;
+        if (diag.seenNodes.has(id)) return;
+        if (diag.seenNodes.size > 500) diag.seenNodes.clear();   // 长会话别让它无限涨
+        diag.seenNodes.add(id);
+        diag.rendered += 1;
+      }, []);
 
       const data = (node && node.data) || {};
       const blocks = Array.isArray(data.blocks) ? data.blocks : [];

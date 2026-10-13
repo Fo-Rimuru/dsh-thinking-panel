@@ -57,7 +57,7 @@
     把 5 行滚动预览压成 1 行 → 改回 block + 相邻兄弟 margin
   - **插话后界面停在上一段**：真因是**面板长高**越过了 DSH 的 25px 跟随阈值
     （`useScrollFollow(state.followingTail, 25)`），此后连 steering 都不再滚
-    （出厂源码 4979 行：`… && reading.followingTail`）。现在每次内容变化都顺手把外层带到底。
+    （出厂源码 4979 行：`… && reading.followingTail`）。（该方案后来被整段撤销 —— 见文末「待定位：插话后界面不自动跟随」。）
     前两轮修的都是「展开过程组」，方向错了
   - **设置导航图标**：DSH 的导航图标是 shell 里 `navIcon(id)` 的硬编码映射，第三方一律兜底齿轮
     → 用 DOM 补丁克隆插件自己的 `IconThink` SVG 替换原图标（卸载时还原）

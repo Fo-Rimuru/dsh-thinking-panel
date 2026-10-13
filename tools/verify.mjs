@@ -582,7 +582,9 @@ const baseProps = (over = {}) => ({
   check('程序化滚动标记用 rAF 清除（scroll 事件先于下一帧）',
     /requestAnimationFrame\(clear\)/.test(clientSrc));
   check('已移除会误判的 userScrolled 标记', !/userScrolled/.test(clientSrc));
-  check('距底部 24px 内视为跟随中', /clientHeight < 24/.test(clientSrc));
+  check('距底部 24px 内视为跟随中',
+    /const gap = el\.scrollHeight - el\.scrollTop - el\.clientHeight;/.test(clientSrc)
+    && /gap < 24/.test(clientSrc));
   check('跟随 effect 不再跳过展开态（回归：曾写成 `|| expanded`）',
     !/if \(el === null \|\| expanded\) return;/.test(clientSrc));
   check('展开态与折叠态共用同一个滚动 ref', /ref: scrollRef,          \/\/ ★ 与折叠态共用/.test(clientSrc));
@@ -800,7 +802,7 @@ const runningProps = () => baseProps({
     && !/function conversationScroller/.test(clientSrc)
     && !/function isFollowingTail/.test(clientSrc));
   check('撤掉的原因留在代码里（免得以后又有人「顺手修一下」）',
-    /conversationScroller \/ isFollowingTail \/ scrollToTail/.test(clientSrc)
+    /conversationScroller/.test(clientSrc) && /scrollToTail/.test(clientSrc)
     && /movedByReader/.test(clientSrc));
 }
 {

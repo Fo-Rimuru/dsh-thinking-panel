@@ -32,6 +32,7 @@
       "immediately": true,
       "inject": [
         "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-settings-general"
       ],
       "external": [
@@ -69,6 +70,7 @@
     "@deepseek-ai/dsh-client-locale": ">=0.2.0-rc.1",
     "@deepseek-ai/dsh-client-ui-chat": ">=0.2.0-rc.1",
     "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.2.0-rc.1",
     "@deepseek-ai/dsh-client-ui-settings-general": ">=0.2.0-rc.1",
     "@deepseek-ai/dsh-client-ui-slots": ">=0.2.0-rc.1",
     "react": ">=18.2.0"

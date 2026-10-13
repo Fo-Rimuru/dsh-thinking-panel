@@ -985,6 +985,38 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 设置页的错误边界。
+     *
+     * ⚠️ 加这一层是因为踩过：0.2.0 刚发出去时，设置左侧的导航项出来了、**内容却是空白** ——
+     * 组件抛的错被宿主吞掉，一点线索都没有。现在抛错会**显示在页面上**。
+     */
+    class SectionBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { error: null };
+      }
+
+      static getDerivedStateFromError(error) { return { error }; }
+
+      componentDidCatch(error) {
+        try { console.error('[dsh-thinking-panel] settings section failed', error); } catch { /* ignore */ }
+      }
+
+      render() {
+        if (this.state.error !== null) {
+          const message = this.state.error && this.state.error.message
+            ? this.state.error.message
+            : String(this.state.error);
+          return h('div', { className: 'dst-page' }, [
+            h('div', { key: 'title', className: 'dst-page-title' }, '深度思考面板'),
+            h('div', { key: 'error', className: 'dst-page-compat' }, `设置页渲染失败：${message}`),
+          ]);
+        }
+        return this.props.children;
+      }
+    }
+
+    /**
      * 设置页 —— 注册在 `settings.section`，也就是设置左侧导航里**独立的一栏**。
      *
      * 早先挂在 `settings.general.item`（通用设置里的一行）：位置太深，也塞不下
@@ -1216,7 +1248,8 @@ window.__ModuleLoader__.load({
           order: 62,
           label: () => t('settings.navLabel'),
           locale: NS,
-        }, (slotProps) => h(SettingsSection, { t: slotProps && slotProps.t ? slotProps.t : t })));
+        }, (slotProps) => h(SectionBoundary, null,
+          h(SettingsSection, { t: slotProps && slotProps.t ? slotProps.t : t }))));
 
         // 遮蔽 assistant-step。
         // 运行时规则（实测于 DSH 0.2.0-rc.2 控制台）：

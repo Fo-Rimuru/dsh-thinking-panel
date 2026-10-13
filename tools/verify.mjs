@@ -278,15 +278,19 @@ check('字典含 zh 与 en 两套', !!localeRegs[0]?.dicts?.zh && !!localeRegs[0
 check('locale 注册走 ctx.effect', clientEffects.some((l) => String(l).includes('dictionaries')));
 
 check('slots.inject 了 shell.overlay', slotInjects.includes('shell.overlay'));
-check('slots.inject 了 settings.general.item', slotInjects.includes('settings.general.item'));
+check('slots.inject 了 settings.section（设置左侧导航独立一栏）', slotInjects.includes('settings.section'));
 check('slots.inject 了 conversation.chat.node', slotInjects.includes('conversation.chat.node'));
 check('恰好注册 3 个 slot 条目', slotRegs.length === 3, `got ${slotRegs.length}`);
 
 const styleReg = slotRegs.find((r) => r.options.name === 'shell.overlay');
-const settingsReg = slotRegs.find((r) => r.options.name === 'settings.general.item');
+const settingsReg = slotRegs.find((r) => r.options.name === 'settings.section');
 const nodeReg = slotRegs.find((r) => r.options.name === 'conversation.chat.node');
 check('shell.overlay 条目 id 正确', styleReg?.options.id === 'thinking-panel-style');
-check('settings.general.item 条目 id 正确', settingsReg?.options.id === 'thinking-panel-settings');
+check('settings.section 条目 id 正确', settingsReg?.options.id === 'thinking-panel');
+check('settings.section 带 label thunk（跟随语言切换）',
+  typeof settingsReg?.options.label === 'function' && String(settingsReg.options.label()).length > 0);
+check('settings.section 的 order 是数字（与电脑控制 61 / 壁纸引擎 500 不撞）',
+  typeof settingsReg?.options.order === 'number');
 check('conversation.chat.node 条目 key = assistant-step', nodeReg?.options.key === 'assistant-step');
 check('conversation.chat.node 条目用更低优先级遮蔽（运行时要求 lowest renders）',
   nodeReg?.options.priority === -1, `priority=${nodeReg?.options.priority}`);
@@ -616,7 +620,7 @@ const baseProps = (over = {}) => ({
 /* --- 设置行 ------------------------------------------------------------ */
 {
   const tree = render(settingsReg.component());
-  check('SettingsRow 渲染出元素树', !!tree && typeof tree.type === 'string', `type=${typeof tree?.type}`);
+  check('SettingsSection 渲染出元素树', !!tree && typeof tree.type === 'string', `type=${typeof tree?.type}`);
   const flat = JSON.stringify(tree);
   check('设置行使用 locale 文案（中文标题）', flat.includes('深度思考面板'));
   check('设置行使用主题令牌', flat.includes('--dsw-alias-label-primary'));
@@ -631,6 +635,47 @@ const baseProps = (over = {}) => ({
   check('Switch 的 onChange 是函数', typeof sw?.props?.onChange === 'function');
   check('不再渲染白底白字的文字按钮', !flat.includes('aria-pressed'));
 }
+
+/* --- 0.2.0：设置页、开关接线与一批审查修复的回查 ------------------------ */
+{
+  const flat = flatten(render(settingsReg.component()));
+  const sw = flat.filter((n) => n.type === 'switch');
+  // 端点不可用（沙箱没有 fetch）时 UpdatePanel 会静默隐藏，所以这里只要求前两个开关
+  check('设置页渲染出总开关与自动展开开关', sw.length >= 2, `got ${sw.length}`);
+  check('设置页标题用 locale 文案', JSON.stringify(flat).includes('深度思考面板'));
+}
+check('注入开关走 Host 的 mode 端点（不存本地）',
+  /run\('mode', \{ mode: next \? 'auto' : 'off' \}\)/.test(clientSrc));
+check('自动更新开关走 auto-update 端点',
+  /run\('auto-update', \{ enabled: next \}\)/.test(clientSrc));
+check('回退按钮显示 Host 算好的目标版本',
+  /state\.previousVersion[\s\S]{0,140}update\.rollbackTo/.test(clientSrc));
+check('兼容性提示会显示到设置页（不再只打控制台）',
+  /settings\.compatWarn/.test(clientSrc) && /compatIssues\.push/.test(clientSrc));
+check('思考面板有复制按钮', /dst-think-copy/.test(clientSrc) && /navigator\.clipboard/.test(clientSrc));
+check('排版容器与出厂同构（.root 字号行高 / .body 16px 间距）',
+  /\.dst-root\{font-size:var\(--dsh-content-font-size/.test(clientSrc)
+  && /\.dst-body\{flex-direction:column;gap:16px/.test(clientSrc));
+check('负边距只在插件自己的正文容器里补偿（不再全局）',
+  /\.dst-body>\[data-turn-process-inline\]\[hidden\]\{margin-bottom:-16px\}/.test(clientSrc));
+check('未知块传的是包装体里的真实载荷', /const payload = block\.block !== undefined \? block\.block : block;/.test(clientSrc));
+check('错误边界失败后可复位', /componentDidUpdate\(prevProps\)/.test(clientSrc));
+check('图片失败至少留一行日志', /renderMessageImages failed/.test(clientSrc));
+check('本地图片走鉴权文件路由', /api\/file\?path=/.test(clientSrc) && /function localPathMediaUrl/.test(clientSrc));
+check('fileMentions 补上了 tail 守卫', /useTurnData\('turn-tail'\)/.test(clientSrc));
+check('不再条件调用 hook（改成条件渲染包装组件）',
+  /function Expandable\(props\)/.test(clientSrc)
+  && !/typeof useDisclosure === 'function' \? useDisclosure\(\)/.test(clientSrc));
+check('滚动 effect 有依赖数组（不再每次渲染强制布局）', /\}, \[text, expanded, running\]\);/.test(clientSrc));
+check('ResizeObserver 只在挂载时建一次',
+  /new ResizeObserver\(\(\) => updateCanScrollRef\.current\(\)\)/.test(clientSrc));
+check('兜底翻译器是模块级常量（否则 labels 的 memo 全被击穿）',
+  /const IDENTITY_T = \(key\) => key;/.test(clientSrc) && !/\(k\) => k;/.test(clientSrc));
+check('useSearchableHidden 与出厂同构（layout 设属性 + 无条件注册监听）',
+  /useLayout\(\(\) => \{/.test(clientSrc) && /addEventListener\('beforematch'/.test(clientSrc));
+check('无障碍朗读文本接上了', /think\.srRunning/.test(clientSrc) && /className: 'dst-sr'/.test(clientSrc));
+check('markProgrammatic 有定时器兜底（窗口不可见时 rAF 会停）',
+  /setTimeout\(clear, 250\)/.test(clientSrc));
 
 /* --- 自动展开过程组 ---------------------------------------------------- */
 /**
@@ -841,7 +886,7 @@ check('路由前缀与 Client 侧一致',
   && /const UPDATE_ROUTE = '\/dsh-thinking-panel\/update'/.test(clientSrc));
 check('端点复用 DSH 的鉴权边界',
   /webCtx\.connection\.requestRejection\(req\)/.test(indexSrc));
-check('变更类方法要求 POST', /const MUTATING = new Set\(\['check', 'install', 'rollback', 'auto-update'\]\)/.test(indexSrc));
+check('变更类方法要求 POST', /const MUTATING = new Set\(\['check', 'install', 'rollback', 'auto-update', 'mode'\]\)/.test(indexSrc));
 /* 回归：check 不需要参数，而早先客户端按「有没有传 body」决定 GET/POST，把它发成 GET，
  * 而 Host 侧 check 属于变更类、一律要求 POST —— 点「检查更新」直接 HTTP 405。 */
 check('自更新客户端：只有 status 是只读方法',
@@ -867,13 +912,23 @@ check('自更新：没有流式 body 时退回一次性读取，但仍判大小'
   selfUpdateSrc.includes('const buf = Buffer.from(await res.arrayBuffer());')
   && selfUpdateSrc.includes('if (buf.length > maxBytes) throw tooBig();'));
 {
-  // 回归：早先 registerUpdateRoutes 在 `if (text === null) return;` 之后，
-  // 于是 mode=off 的用户会连自更新面板一起失去（/update/status 变 404）。
-  const applyBody = indexSrc.slice(indexSrc.indexOf('export function apply'));
-  const at = applyBody.indexOf('registerUpdateRoutes(ctx)');
-  const guard = applyBody.indexOf('if (text === null) return');
-  check('自更新端点注册在 off 短路之前（mode=off 也不丢自更新）',
-    at >= 0 && guard >= 0 && at < guard, `at=${at} guard=${guard}`);
+  /* 回归：早先 `apply()` 里有 `if (text === null) return;` 的提前返回，而端点注册写在它
+   * 后面 —— mode=off 的用户会连自更新面板一起失去（/update/status 变 404）。
+   * 现在两者彻底解耦：注入归 createInjection 管，端点无条件注册。 */
+  const applyBody = indexSrc.slice(
+    indexSrc.indexOf('export function apply'),
+    indexSrc.indexOf('function pluginDataDir'),
+  );
+  check('语言注入不再用提前 return 短路（端点与注入解耦）',
+    applyBody.length > 0 && !/if \(text === null\) return/.test(applyBody));
+  check('模式切换走 createInjection 的「先注销再注册」',
+    /function createInjection\(ctx\)/.test(indexSrc) && /disposeAll\(\);/.test(indexSrc));
+  check('mode 持久化在插件数据目录（cordis.patch.yml 只是默认值）',
+    /function createModeStore\(fallback\)/.test(indexSrc) && /settings\.json/.test(indexSrc));
+  check('端点注册在 apply 内部无条件执行', /registerUpdateRoutes\(ctx, \{/.test(indexSrc));
+  check('启动后会自动跑一次自动更新（不阻塞启动）',
+    /AUTO_UPDATE_DELAY_MS/.test(indexSrc) && /updater\.autoUpdate\(\)/.test(indexSrc)
+    && /typeof timer\.unref === 'function'/.test(indexSrc));
 }
 check('自更新按需注入 webServer（缺了也不影响插件本身）',
   /ctx\.inject\(\['connection', 'webServer'\]/.test(indexSrc));

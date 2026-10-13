@@ -173,13 +173,14 @@ git@github.com: Permission denied (publickey).     ← 有 known_hosts 但没 SS
 > **DSH 官方目前不支持插件自动更新** —— 安装对话框里就写着「插件安装后，暂不支持自动更新。
 > 若需升级，请先卸载再安装新版」。**本插件自带自更新，不需要卸载重装。**
 
-插件自带自更新，入口就在 **设置 → 通用 → 深度思考面板** 那一行下面。
+插件自带自更新，入口在 **设置 → 深度思考面板**（设置左侧导航里**独立的一栏**）。
 
 | 行为 | 说明 |
 |---|---|
 | **检查更新** | 查 npm registry 上的最新版；有新版本时显示 `v0.1.0 → v0.2.0` |
 | **更新** | 下载 tarball → 校验 → **原子替换**（同目录 `rename`，要么旧内容要么新内容）→ 失败自动回滚 |
-| **回滚** | 装回上一个版本，并把该版本记进 `holdVersion` —— **防止自动检查又把它装回来**（否则逃生门会自己关上） |
+| **一键回退** | 回到**上一个装过的版本**（不是「当前版本」—— 重启之后那等于什么都没做），并把它记进 `holdVersion`，**防止自动检查又装回来** |
+| **自动更新** | 默认打开：DSH 启动 8 秒后静默检查一次，有新版就装。可在设置页关掉 |
 | **无感 vs 重启** | 只改 `client.js` 时**立即生效**；改到 `index.js` / `package.json` / `cordis.patch.yml` 会提示**重启 DSH**（Host 半部不热加载） |
 
 **安全边界**（自更新是在改你自己的插件目录，所以这些必须说清楚）：
@@ -187,27 +188,36 @@ git@github.com: Permission denied (publickey).     ← 有 known_hosts 但没 SS
 - **路径白名单**：只允许覆盖 `index.js`、`client.js`、`package.json`、`cordis.patch.yml`、`locale/*.json`；tarball 里其它文件（含 `../` 穿越）**一律拒绝**
 - **写入前整体预检**：任何一个路径不合法就整体失败，**不会写一半**
 - **符号链接防护**：`packageDir` 之下任意路径段是软链就拒绝写入（但 `packageDir` 自身允许是软链 —— 本插件常以 `link:` 安装）
-- **下载限制**：60 秒超时、8 MB 上限
+- **下载限制**：60 秒超时、8 MB 上限，而且上限是**流式判定**的（一超限就掐断，不是读完再判）
+- **并发互斥**：桌面端与 Web GUI 同时点「更新」时后一个会被拒绝，不会交错写文件
 - **鉴权**：端点复用 DSH 的 `connection.requestRejection`，且变更类方法**只接受 POST**
-- **`holdVersion`**：回滚过的版本不会再被自动提示更新
+- **`holdVersion`**：回滚过的版本不会再被提示更新（`check` 与 `status` 两个口径都扣掉了它）
 
 > ⚠️ **插件崩了、按钮点不到时**，用命令行回滚：
 > ```powershell
 > & $dsh plugin --profile desktop add dsh-thinking-panel@<上一个版本>
 > ```
 
-状态与备份存放在 `$DSH_HOME/plugin-data/dsh-thinking-panel/`（`update-state.json` + `update-backup/`）。
+状态与备份存放在 `$DSH_HOME/plugin-data/dsh-thinking-panel/`（`update-state.json`、`settings.json`、`update-backup/`）。
 
 ## 配置
 
-`cordis.patch.yml` 的行配置支持 `mode`：
+### 设置页（推荐）
+
+**设置 → 深度思考面板**，四个开关：插件总开关、跟随提问语言思考、自动展开过程组、自动更新。
+语言注入开关默认打开 —— 关掉就回到出厂的英文思考（部分任务上英文推理更稳）。
+
+### `cordis.patch.yml`（高级：强制语言）
+
+行配置的 `mode` 只提供**首次运行的默认值**；在设置页改过之后以状态文件
+（`$DSH_HOME/plugin-data/dsh-thinking-panel/settings.json`）为准。
 
 | mode | 行为 |
 |---|---|
 | `auto`（默认） | 跟随用户语言 |
 | `zh` | 强制中文思考 |
 | `en` | 强制英文思考 |
-| `off` | 不注入任何段落（仅保留样式） |
+| `off` | 不注入任何段落（仅保留样式；**自更新与设置页仍然可用**） |
 
 ## 已知限制
 
@@ -470,8 +480,8 @@ DSH 升级后最常见的是**被兼容性闸门拦下**（见上一节的 `peer
 
 - **遇到问题 / 想要新功能**：[开一个 Issue](https://github.com/Fo-Rimuru/dsh-thinking-panel/issues)
   —— Bug 模板会引导你填 DSH 版本、控制台输出和几条自查项，这几项能省掉好几轮来回
-- **Pull Request**：欢迎。改完请先跑 `node tools/verify.mjs`（见下），确保 174 项通过
-  （准备了出厂源码副本则是 197 项）
+- **Pull Request**：欢迎。改完请先跑 `node tools/verify.mjs`（见下），确保 201 项通过
+  （准备了出厂源码副本则是 224 项）
 - **提问也是 Issue**：选 Bug 模板即可，问题可搜索、可追溯，别人遇到同样情况能直接搜到
 - **已排期但还没做的改动**：见 [`docs/ROADMAP.md`](docs/ROADMAP.md)（0.2.0 待办：注入开关、
   自动更新开关、一键回退入口、设置独立成一栏）
@@ -482,14 +492,14 @@ DSH 升级后最常见的是**被兼容性闸门拦下**（见上一节的 `peer
 ## 自检
 
 ```powershell
-# 197 项契约自检：Host 半部的 PromptSection 契约与四种 mode；Client 半部的模块注册、
+# 224 项契约自检：Host 半部的 PromptSection 契约与四种 mode；Client 半部的模块注册、
 # locale、三个 slot 条目、<style> 内容；并真实渲染 assistant-step 组件树
 # （分组过滤 / tool-call / 图片合并 / 错误边界 / 滚动跟随 / 空 blocks / 官方 Switch /
 #   自动展开过程组：beforematch 通道、焦点兜底、已结束轮次不插手、开关默认打开）
 node tools\verify.mjs
-#   无出厂源码时 → 174 passed, 0 failed, 23 skipped
-#   有出厂源码时 → 194 passed, 0 failed, 3 skipped
-#   再提供槽目录 → 197 passed, 0 failed
+#   无出厂源码时 → 201 passed, 0 failed, 23 skipped
+#   有出厂源码时 → 221 passed, 0 failed, 3 skipped
+#   再提供槽目录 → 224 passed, 0 failed
 ```
 
 其中 23 项是「回查 DSH 出厂源码」的交叉比对，需要你自己准备一份解包副本才会执行：
@@ -507,13 +517,13 @@ node tools\verify.mjs
 
 ```powershell
 node tools\test-self-update.mjs
-#   → 46 passed, 0 failed
+#   → 56 passed, 0 failed
 #   覆盖：semver 比较（含 prerelease 规则）、路径白名单与穿越攻击、
 #        tar 解析、原子写入、回滚正确性、越界时整体拒绝
 ```
 
 CI 也会跑这两项（[`.github/workflows/verify.yml`](.github/workflows/verify.yml)），
-所以每次 push 都会看到那 174 项（无出厂源码时）是否通过。
+所以每次 push 都会看到那 201 项（无出厂源码时）是否通过。
 
 ## 卸载
 

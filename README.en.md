@@ -187,12 +187,15 @@ After that, both `github:owner/repo` and full URLs go over HTTPS and no SSH key 
 > ("Installed plugins do not update automatically yet. To upgrade a plugin, uninstall it and
 > install the new version."). **This plugin updates itself; no uninstall/reinstall needed.**
 
-The plugin updates itself; the controls live right under **Settings → General → Thinking Panel**.
+The plugin updates itself; the controls live in **Settings → Thinking Panel** (its own entry in the
+settings sidebar).
 
 | Action | Behaviour |
 |---|---|
 | **Check for updates** | Queries npm for the latest version; shows `v0.1.0 → v0.2.0` when one exists |
 | **Update** | Downloads the tarball → verifies → **atomically replaces** files (same-directory `rename`: readers see either the old or the new content) → rolls back automatically on failure |
+| **One-click rollback** | Returns to the **previously installed** version (not "the running version" — after a restart that is a no-op), and holds it so the auto-check will not install it again |
+| **Automatic updates** | On by default: eight seconds after DSH starts it checks silently and installs. Switchable in settings |
 | **Roll back** | Reinstalls the previous version and records it in `holdVersion` — so the automatic check **will not offer it again** (otherwise the escape hatch would close itself) |
 | **Seamless vs. restart** | A `client.js`-only change takes effect **immediately**; touching `index.js` / `package.json` / `cordis.patch.yml` prompts a **DSH restart** (the host half does not hot-reload) |
 
@@ -201,9 +204,10 @@ The plugin updates itself; the controls live right under **Settings → General 
 - **Path whitelist**: only `index.js`, `client.js`, `package.json`, `cordis.patch.yml` and `locale/*.json` may be overwritten; anything else in the tarball — including `../` traversal — is refused
 - **Whole-batch pre-check**: one illegal path fails the entire operation, so it never writes half a payload
 - **Symlink protection**: any path segment *below* `packageDir` that is a symlink is refused (but `packageDir` itself may be a symlink — this plugin is commonly installed via `link:`)
-- **Download limits**: 60 s timeout, 8 MB cap
+- **Download limits**: 60 s timeout, 8 MB cap — enforced **while streaming** (cut off the moment it is exceeded, not after reading the whole response)
+- **Concurrency lock**: if the desktop app and the Web GUI press "Update" at the same time, the second one is refused instead of the writes interleaving
 - **Authentication**: the endpoint reuses DSH's `connection.requestRejection`, and mutating methods accept **POST only**
-- **`holdVersion`**: a version you rolled back from is never offered again
+- **`holdVersion`**: a version you rolled back from is never offered again (both `check` and `status` account for it)
 
 > ⚠️ **If the plugin itself breaks and the button is unreachable**, roll back from the CLI:
 > ```powershell
@@ -214,14 +218,23 @@ State and backups live in `$DSH_HOME/plugin-data/dsh-thinking-panel/` (`update-s
 
 ## Configuration
 
-The `cordis.patch.yml` row accepts a `mode`:
+### Settings page (recommended)
+
+**Settings → Thinking Panel** holds four switches: plugin master switch, "reason in the language of
+the question", auto-expand the process group, and automatic updates. The injection switch is on by
+default — turn it off to go back to the shipped English reasoning (more reliable on some tasks).
+
+### `cordis.patch.yml` (advanced: force a language)
+
+The row's `mode` only provides the **first-run default**; once you change it in settings, the state
+file (`$DSH_HOME/plugin-data/dsh-thinking-panel/settings.json`) wins.
 
 | mode | Behaviour |
 |---|---|
 | `auto` (default) | Follow the user's language |
 | `zh` | Always think in Chinese |
 | `en` | Always think in English |
-| `off` | Inject nothing (styling only) |
+| `off` | Inject nothing (styling only — self-update and the settings page keep working) |
 
 ## Known limitations
 
@@ -282,7 +295,7 @@ match**. Only `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` are checked, using
 - **Bugs and feature requests**: [open an issue](https://github.com/Fo-Rimuru/dsh-thinking-panel/issues).
   The bug template asks for your DSH version, console output and a few self-checks — those save
   several rounds of back-and-forth.
-- **Pull requests** are welcome. Please run `node tools/verify.mjs` first and keep all 174 checks green (197 with a DSH source copy).
+- **Pull requests** are welcome. Please run `node tools/verify.mjs` first and keep all 201 checks green (224 with a DSH source copy).
 - **Planned but not built yet**: see [`docs/ROADMAP.md`](docs/ROADMAP.md) (0.2.0: injection toggle,
   auto-update toggle, one-click rollback entry, settings as its own section).
 - Please skim [Known limitations](#known-limitations) before filing — things like "language following
@@ -292,8 +305,8 @@ match**. Only `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` are checked, using
 
 ```powershell
 node tools/verify.mjs
-#   without DSH source → 174 passed, 0 failed, 23 skipped
-#   with DSH source    → 194 passed, 0 failed, 3 skipped
+#   without DSH source → 201 passed, 0 failed, 23 skipped
+#   with DSH source    → 221 passed, 0 failed, 3 skipped
 ```
 
 The 23 skipped ones cross-check the plugin against DSH's shipped source; supply an unpacked copy via
@@ -305,7 +318,7 @@ everything runs in a temp dir):
 
 ```powershell
 node tools/test-self-update.mjs
-#   → 46 passed, 0 failed
+#   → 56 passed, 0 failed
 #   covers: semver comparison (incl. prerelease rules), path whitelist and traversal attacks,
 #           tar parsing, atomic writes, rollback correctness, whole-batch rejection on bad paths
 ```

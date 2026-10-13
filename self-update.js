@@ -208,6 +208,14 @@ function readdirSyncSafe(dir) {
   try { return readdirSync(dir); } catch { return []; }
 }
 
+/** 读**磁盘上**当前装着的版本（不是进程启动时那一个）。 */
+function readInstalledVersion(packageDir) {
+  try {
+    const parsed = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
+    return typeof parsed.version === 'string' ? parsed.version : null;
+  } catch { return null; }
+}
+
 /**
  * 应用更新：先整体预检 → 备份 → 逐个原子写入；任何一步失败都回滚到备份。
  * @returns {{ok:boolean, written?:string[], before?:string[], restartRequired?:boolean, error?:string}}
@@ -306,7 +314,7 @@ export function createSelfUpdater(options) {
    * 回滚是「新版有问题」时的逃生门 —— 若自动检查又把它装回来，等于逃生门自己关上。
    * 所以只压制「正好等于该版本」的更新，更高的版本照常提示。
    */
-  let state = { autoUpdate: true, latestVersion: null, holdVersion: null, lastError: null, lastCheckAt: null, lastAppliedAt: null };
+  let state = { autoUpdate: true, latestVersion: null, holdVersion: null, previousVersion: null, lastError: null, lastCheckAt: null, lastAppliedAt: null };
 
   function loadState() {
     try {
@@ -408,8 +416,13 @@ export function createSelfUpdater(options) {
       const tarball = await fetchWithLimit(tarballUrl(target));
       const files = extractPackageFiles(tarball);
       if (files.length === 0) throw new Error('tarball 里没有白名单内的文件（包结构可能变了）');
+      /* 记下「装之前磁盘上是哪个版本」—— 回滚的默认目标就是它。
+       * runningVersion 不行：重启之后它就等于当前版本，点回滚只会把当前版本再装一遍。
+       * 重复安装同一版本时不覆盖，免得把真正的上一个版本冲掉。 */
+      const before = readInstalledVersion(packageDir) ?? runningVersion;
       const result = applyPayload(files, { packageDir, backupDir });
       if (!result.ok) throw new Error(result.error);
+      if (before !== target) state.previousVersion = before;
       state.latestVersion = target;
       state.lastAppliedAt = Date.now();
       state.lastError = null;
@@ -426,13 +439,20 @@ export function createSelfUpdater(options) {
 
   /** 回滚到指定版本（默认「当前运行版本」），并把它记进 holdVersion。 */
   async function rollbackImpl(version) {
-    const target = typeof version === 'string' && version.length > 0 ? version : runningVersion;
+    /* 默认回到「上一个装过的版本」，而不是 runningVersion ——
+     * 重启之后 runningVersion 就是当前版本，点回滚只会把当前版本再装一遍，
+     * 还照样提示「已回滚到 vX」（实测踩过这个坑）。 */
+    const target = typeof version === 'string' && version.length > 0
+      ? version
+      : (state.previousVersion || runningVersion);
     try {
       const tarball = await fetchWithLimit(tarballUrl(target));
       const files = extractPackageFiles(tarball);
       if (files.length === 0) throw new Error('tarball 里没有白名单内的文件');
+      const before = readInstalledVersion(packageDir) ?? runningVersion;
       const result = applyPayload(files, { packageDir, backupDir });
       if (!result.ok) throw new Error(result.error);
+      if (before !== target) state.previousVersion = before;   // 来回切：再点一次就回到刚才那个
       state.holdVersion = target;
       state.lastError = null;
       saveState();
@@ -451,15 +471,35 @@ export function createSelfUpdater(options) {
     return { ok: true, autoUpdate: state.autoUpdate };
   }
 
+  /**
+   * 自动更新：查一次，有新版就装。失败只记状态、不抛。
+   * 由 Host 在启动后延迟调用一次（见 index.js），用户不用点任何东西。
+   */
+  async function autoUpdate() {
+    if (state.autoUpdate === false) return { ok: false, error: 'auto update disabled' };
+    return locked('auto-update', async () => {
+      const checked = await checkImpl();
+      if (!checked.ok || !checked.hasUpdate) return checked;
+      log(`自动更新：发现 ${checked.latestVersion}，开始安装`);
+      return installImpl(checked.latestVersion);
+    });
+  }
+
   function status() {
+    const latest = state.latestVersion;
     return {
       ok: true,
       packageName: PACKAGE_NAME,
       runningVersion,
-      latestVersion: state.latestVersion,
-      hasUpdate: typeof state.latestVersion === 'string' && compareSemver(runningVersion, state.latestVersion) < 0,
+      latestVersion: latest,
+      /* ⚠️ 这里也要扣掉 holdVersion。check() 扣了、status() 没扣的话，
+       * 用户回滚之后面板仍会显示「→ vX」并给出更新按钮 —— 等于把他刚关上的逃生门又打开。 */
+      hasUpdate: typeof latest === 'string'
+        && compareSemver(runningVersion, latest) < 0
+        && state.holdVersion !== latest,
       autoUpdate: state.autoUpdate !== false,
       holdVersion: state.holdVersion,
+      previousVersion: state.previousVersion,
       lastError: state.lastError,
       lastCheckAt: state.lastCheckAt,
       lastAppliedAt: state.lastAppliedAt,
@@ -473,6 +513,7 @@ export function createSelfUpdater(options) {
     install: (version) => locked('install', () => installImpl(version)),
     rollback: (version) => locked('rollback', () => rollbackImpl(version)),
     setAutoUpdate,
+    autoUpdate,
     status,
   };
 }

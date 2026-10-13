@@ -48,6 +48,14 @@ window.__ModuleLoader__.load({
     const Switch = primitives && primitives.Switch ? primitives.Switch : null;
 
     const NS = 'thinking-panel';
+    /**
+     * 兜底翻译器。**必须是模块级常量**：写成每次 render 新建的箭头函数会让
+     * `labels` 的 useMemo 每次都失效，进而击穿 MarkdownText 的 memo ——
+     * 流式期间整段 Markdown 会全量重渲染。
+     */
+    const IDENTITY_T = (key) => key;
+    /** useLayoutEffect 在自检沙箱（mock React）里没有，降级到 useEffect。 */
+    const useLayout = typeof React.useLayoutEffect === 'function' ? React.useLayoutEffect : React.useEffect;
     const STORAGE_KEY = 'dsh-thinking-panel.enabled';
 
     /**
@@ -56,7 +64,16 @@ window.__ModuleLoader__.load({
      * 原则是**尽量不阻断**——能跑就先跑、能降级就降级，但一定要把问题明确打到
      * 控制台，否则用户只会看到「样式没变」却毫无头绪。提示里带上版本与反馈入口。
      */
+    /** 兼容性提示的留档：设置页会读它并显示出来。 */
+    const compatIssues = [];
+
     function compatReport(problem, detail) {
+      /* 留档一份：设置页会把它显示出来 —— 只打控制台的话，用户永远看不到，
+       * 只会觉得「装了插件样式没变」。 */
+      try {
+        compatIssues.push(String(problem));
+        while (compatIssues.length > 20) compatIssues.shift();
+      } catch { /* ignore */ }
       try {
         const lines = [
           `[dsh-thinking-panel] 兼容性提示：${problem}`,
@@ -85,6 +102,15 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'settings.title': '深度思考面板',
+      'settings.navLabel': '深度思考面板',
+      'settings.compatWarn': '检测到 {n} 条兼容性提示（详见控制台）—— DSH 升级后接口可能有变化，插件已尽量降级运行。',
+      'settings.inject.title': '跟随提问语言思考',
+      'settings.inject.desc': '向系统提示词与运行时上下文注入「用提问的语言思考」的规则。关掉就回到出厂的英文思考（部分任务上英文推理更稳）。',
+      'settings.inject.toggle': '跟随提问语言思考',
+      'settings.autoUpdate.title': '自动更新',
+      'settings.autoUpdate.desc': 'DSH 启动后自动检查并安装新版本（写入前有预检与备份，失败会自动回滚）。',
+      'settings.autoUpdate.toggle': '自动安装新版本',
+      'update.rollbackTo': '回退到 v{v}',
       'settings.desc': '让思考内容跟随用户输入语言；思考中多行滚动预览、展开看完整推理、左侧竖线、「已思考（用时 X 秒）」标题。',
       'settings.on': '已启用',
       'settings.off': '已停用',
@@ -95,6 +121,11 @@ window.__ModuleLoader__.load({
       'settings.autoReveal.on': '已打开',
       'settings.autoReveal.off': '已关闭',
       'think.running': '深度思考中',
+      'think.srRunning': '正在思考',
+      'think.copy': '复制',
+      'think.copied': '已复制',
+      'plain.unknownBlock': '未知内容块',
+      'plain.truncated': '已截断（共 {total} 行）',
       'think.done': '已思考',
       'think.stopped': '已停止',
       'think.seconds': '（用时 {s} 秒）',
@@ -123,6 +154,15 @@ window.__ModuleLoader__.load({
     };
     const en = {
       'settings.title': 'Thinking Panel',
+      'settings.navLabel': 'Thinking Panel',
+      'settings.compatWarn': '{n} compatibility notice(s) — see the console. DSH interfaces may have changed; the plugin is degrading gracefully.',
+      'settings.inject.title': 'Reason in the language of the question',
+      'settings.inject.desc': 'Injects a "think in the language you were asked in" rule into the system prompt and the runtime context. Turn it off to go back to the shipped English reasoning (more reliable on some tasks).',
+      'settings.inject.toggle': 'Reason in the question language',
+      'settings.autoUpdate.title': 'Automatic updates',
+      'settings.autoUpdate.desc': 'Checks for and installs new versions after DSH starts (pre-checked, backed up, and rolled back on failure).',
+      'settings.autoUpdate.toggle': 'Install new versions automatically',
+      'update.rollbackTo': 'Roll back to v{v}',
       'settings.desc': 'Reasoning follows your language; multi-line live preview, expandable full reasoning, left rail, and a duration title.',
       'settings.on': 'Enabled',
       'settings.off': 'Disabled',
@@ -133,6 +173,11 @@ window.__ModuleLoader__.load({
       'settings.autoReveal.on': 'On',
       'settings.autoReveal.off': 'Off',
       'think.running': 'Thinking',
+      'think.srRunning': 'Thinking',
+      'think.copy': 'Copy',
+      'think.copied': 'Copied',
+      'plain.unknownBlock': 'Unknown block',
+      'plain.truncated': 'Truncated ({total} lines)',
       'think.done': 'Thought',
       'think.stopped': 'Stopped',
       'think.seconds': ' for {s}s',
@@ -203,6 +248,27 @@ window.__ModuleLoader__.load({
 .dst-think-body::-webkit-scrollbar-thumb:hover{
   background:var(--dsw-alias-label-tertiary,var(--dsw-alias-border-l2));
   background-clip:padding-box}
+/* 与出厂 AssistantMarkdown.module.css 同构的排版基线：
+   .root 给字号/行高/正文色，.body 给 16px 块间距。 */
+.dst-root{font-size:var(--dsh-content-font-size,14px);line-height:calc(24px + var(--dsh-content-font-delta,0px));
+  color:var(--dsw-alias-label-primary);flex-direction:column;display:flex;min-width:0}
+.dst-body{flex-direction:column;gap:16px;display:flex;min-width:0}
+/* 无障碍：屏幕阅读器能听出「正在思考」（出厂在同一位置用 row.running） */
+.dst-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* 设置页（settings.section 的整页内容） */
+.dst-page{display:flex;flex-direction:column;gap:2px;padding:4px 0;min-width:0}
+.dst-page-title{font-size:16px;line-height:24px;font-weight:500;color:var(--dsw-alias-label-primary);margin-bottom:4px}
+.dst-page-compat{margin:6px 0;padding:8px 10px;border-radius:6px;font-size:12px;line-height:18px;
+  color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-secondary));
+  background:var(--dsw-alias-interactive-bg-hover)}
+.dst-update-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0 10px;
+  font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.dst-update-ver,.dst-update-arrow{color:var(--dsw-alias-label-secondary)}
+/* 思考面板的复制按钮（官方 Markdown 有复制，思考正文一直没有） */
+.dst-think-copy{margin-left:8px;flex:none;cursor:pointer;border:0;background:transparent;padding:0 4px;
+  color:var(--dsw-alias-label-caption);font-size:var(--dsh-content-font-size-secondary,13px);border-radius:4px}
+.dst-think-copy:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
 /* 与出厂 AssistantMarkdown.module.css 的 .stopped 同款：被中断的轮次挂一个小徽标 */
 .dst-stopped{border-radius:var(--dsw-radius-s,4px);background:var(--dsw-alias-interactive-bg-hover);
   color:var(--dsw-alias-label-tertiary);align-self:flex-start;padding:0 6px;font-size:11px;line-height:18px}
@@ -210,7 +276,9 @@ window.__ModuleLoader__.load({
 .dst-plain-reasoning{margin:4px 0;color:var(--dsw-alias-label-secondary);
   font:var(--dsw-font-markdown-small);white-space:pre-wrap;max-height:6.5em;overflow:hidden}
 /* 与出厂 AssistantMarkdown.module.css 同构：折叠的推理块收掉多余间距 */
-[data-turn-process-inline][hidden]{margin-bottom:-16px}
+/* 与出厂同构：负边距只在插件自己的 flex 正文容器里补偿（出厂限定 .body > …）；
+   写成全局选择器会在没有 gap 的上下文里凭空把后续内容上移 16px。 */
+.dst-body>[data-turn-process-inline][hidden]{margin-bottom:-16px}
 `;
 
     /* ================================================================== *
@@ -299,8 +367,11 @@ window.__ModuleLoader__.load({
           const head = root === null ? null : root.querySelector('button[aria-controls]');
           if (head === null || typeof head.click !== 'function') return;
           const prev = typeof document !== 'undefined' && document !== null ? document.activeElement : null;
+          /* 只有「真的能聚焦」的元素才值得还原：document.body 的 focus() 是空操作，
+           * 不判断就会出现「输入框失焦、焦点跳到组头」。 */
+          const refocus = prev && prev !== head && prev !== document.body && typeof prev.focus === 'function';
           head.click();
-          if (prev && prev !== head && typeof prev.focus === 'function') {
+          if (refocus) {
             try { prev.focus({ preventScroll: true }); } catch { /* ignore */ }
           }
         } catch { /* ignore */ }
@@ -355,10 +426,50 @@ window.__ModuleLoader__.load({
         catch { /* ignore */ }
       }
 
+      componentDidUpdate(prevProps) {
+        /* 一次瞬时异常（半截 block、循环引用）不该让这条消息**永久**只剩纯文本：
+         * 数据换了就再给正常渲染一次机会。 */
+        if (this.state.failed && prevProps.blocks !== this.props.blocks) this.setState({ failed: false });
+      }
+
       render() {
         if (this.state.failed) return plainFallback(this.props.blocks);
         return this.props.children;
       }
+    }
+
+    /** 兜底渲染的文本归一：非字符串直接塞进 React 会抛 "Objects are not valid as a React child"。 */
+    function asText(value) {
+      if (typeof value === 'string') return value;
+      if (value === null || value === undefined) return '';
+      try { return String(value); } catch { return ''; }
+    }
+
+    /** 未知块的兜底序列化：循环引用 / BigInt 会让 JSON.stringify 抛错，
+     *  而抛在错误边界内部没人接 —— 整条消息会被降级成纯文本。 */
+    function safeStringify(value) {
+      try { return JSON.stringify(value); } catch { return '[unserializable]'; }
+    }
+
+    const WINDOWS_PATH = /^[A-Za-z]:[\\/]/;
+    function isAbsoluteWorkspacePath(path) { return path.startsWith('/') || WINDOWS_PATH.test(path); }
+    /**
+     * 与出厂 fileMediaUrl 同构：把**绝对本地路径**改写成带鉴权的 `api/file?path=…`。
+     * ⚠️ 早先这里是直接 `new URL(value, base)` —— 本地图片不走鉴权路由、加载不出来；
+     * 而出厂会拒绝的值（非绝对路径、UNC、控制字符）反而被原样放行。
+     */
+    function fileMediaUrl(base, path) {
+      if (typeof base !== 'string' || typeof path !== 'string' || path.length === 0) return undefined;
+      if (!/^https?:/u.test(base) && !base.startsWith('dsh-app://app/')) return undefined;
+      if (!isAbsoluteWorkspacePath(path)) return undefined;
+      if (/^[/\\]{2}/u.test(path)) return undefined;
+      if (/[\u0000-\u001f\u007f]/u.test(path)) return undefined;
+      try { return new URL(`api/file?path=${encodeURIComponent(path)}`, base).href; } catch { return undefined; }
+    }
+    function localPathMediaUrl(base, value) {
+      let path;
+      try { path = decodeURIComponent(String(value).split(/[?#]/u)[0] ?? ''); } catch { return undefined; }
+      return fileMediaUrl(base, path);
     }
 
     /** 兜底渲染：只输出纯文本，不依赖任何 Harness 客户端包。 */
@@ -369,9 +480,9 @@ window.__ModuleLoader__.load({
         const b = list[i];
         if (b === undefined || b === null) continue;
         if (b.kind === 'reasoning') {
-          out.push(h('div', { className: 'dst-plain-reasoning', key: i }, b.text));
+          out.push(h('div', { className: 'dst-plain-reasoning', key: i }, asText(b.text)));
         } else if (b.kind === 'text') {
-          out.push(h('div', { className: 'dst-plain', key: i }, b.text));
+          out.push(h('div', { className: 'dst-plain', key: i }, asText(b.text)));
         }
       }
       return out.length === 0 ? null : h(React.Fragment, null, out);
@@ -406,23 +517,31 @@ window.__ModuleLoader__.load({
      * ================================================================== */
     function useSearchableHidden(hidden, reveal) {
       const ref = React.useRef(null);
+      /* 揭示回调放进 ref：出厂的 reveal 每次 render 都可能换引用，
+       * 直接写进依赖会让 beforematch 监听器反复摘挂、hidden 属性反复重设。 */
+      const revealRef = React.useRef(reveal);
+      revealRef.current = reveal;
+      /* 与出厂同构：属性用 **layout effect** 设/清（用 useEffect 会晚一帧、折叠时闪一下），
+       * 监听器则**单独且无条件**注册（展开期间也要在位）。 */
+      useLayout(() => {
+        const element = ref.current;
+        if (element === null || typeof element.setAttribute !== 'function') return undefined;
+        const doc = element.ownerDocument;
+        if (hidden && doc && typeof element.contains === 'function' && element.contains(doc.activeElement)) {
+          if (typeof revealRef.current === 'function') revealRef.current();
+          return undefined;
+        }
+        if (hidden) element.setAttribute('hidden', 'until-found');
+        else element.removeAttribute('hidden');
+        return undefined;
+      }, [hidden]);
       React.useEffect(() => {
         const element = ref.current;
-        if (element === null) return undefined;
-        const doc = element.ownerDocument;
-        if (hidden && doc && element.contains(doc.activeElement)) { reveal(); return undefined; }
-        if (hidden) {
-          element.setAttribute('hidden', 'until-found');
-          const onBeforeMatch = () => reveal();
-          element.addEventListener('beforematch', onBeforeMatch);
-          return () => {
-            element.removeEventListener('beforematch', onBeforeMatch);
-            element.removeAttribute('hidden');
-          };
-        }
-        element.removeAttribute('hidden');
-        return undefined;
-      }, [hidden, reveal]);
+        if (element === null || typeof element.addEventListener !== 'function') return undefined;
+        const onBeforeMatch = () => { if (typeof revealRef.current === 'function') revealRef.current(); };
+        element.addEventListener('beforematch', onBeforeMatch);
+        return () => { element.removeEventListener('beforematch', onBeforeMatch); };
+      }, []);
       return ref;
     }
 
@@ -440,17 +559,54 @@ window.__ModuleLoader__.load({
     /* ================================================================== *
      * 思考面板
      * ================================================================== */
+    /**
+     * 展开状态的两种来源，各自包成一个 hook 序列固定的组件。
+     *
+     * ⚠️ 这里踩过 React hooks 的坑：早先是在 ThinkingPanel 里写成「有注入就调用它、
+     * 没有就退回本地状态」的三元表达式 —— 那是**条件调用 hook**。
+     * 只要 props 变（DSH 换渲染路径、热更新），hook 数量随之变化，整棵 chat 树直接崩。
+     * 现在改为「按 props 决定**渲染哪个**包装组件」，两边内部都是无条件调用。
+     */
+    function WithDisclosure(props) {
+      const disclosure = props.useDisclosure();
+      return h(ThinkingPanel, {
+        ...props,
+        useDisclosure: undefined,
+        expanded: disclosure !== null && disclosure !== undefined && disclosure.expanded === true,
+        toggle: disclosure && typeof disclosure.toggle === 'function' ? disclosure.toggle : NOOP,
+      });
+    }
+    function WithOwnState(props) {
+      const [expanded, setExpanded] = React.useState(false);
+      return h(ThinkingPanel, {
+        ...props,
+        useDisclosure: undefined,
+        expanded,
+        toggle: React.useCallback(() => setExpanded((v) => !v), []),
+      });
+    }
+    /** 有注入的 useDisclosure 就用它（与出厂一致，跟随 Turn 重置），否则退回自带状态。 */
+    function Expandable(props) {
+      return typeof props.useDisclosure === 'function'
+        ? h(WithDisclosure, props)
+        : h(WithOwnState, props);
+    }
+
     function ThinkingPanel(props) {
-      const { text, running, stopped, useDisclosure, t } = props;
-      const tr = typeof t === 'function' ? t : (k) => k;
-      /* 展开状态优先用注入的 useDisclosure（与出厂一致，跟随 Turn 重置）；
-       * 未注入时退回自带 useState，保证仍可展开。 */
-      const [ownExpanded, setOwnExpanded] = React.useState(false);
-      const disclosure = typeof useDisclosure === 'function' ? useDisclosure() : null;
-      const expanded = disclosure !== null ? disclosure.expanded === true : ownExpanded;
-      const toggle = disclosure !== null
-        ? (typeof disclosure.toggle === 'function' ? disclosure.toggle : () => {})
-        : () => setOwnExpanded((v) => !v);
+      const { text, running, stopped, expanded, toggle, t } = props;
+      const tr = typeof t === 'function' ? t : IDENTITY_T;
+      /** 复制思考正文。`navigator.clipboard` 在非安全上下文里可能没有 → 静默降级。 */
+      const [copied, setCopied] = React.useState(false);
+      const copy = React.useCallback(() => {
+        try {
+          const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+          if (!clip || typeof clip.writeText !== 'function') return;
+          clip.writeText(text).then(() => {
+            setCopied(true);
+            if (typeof setTimeout === 'function') setTimeout(() => setCopied(false), 1500);
+          }, () => { /* 被拒绝就算了，不打扰用户 */ });
+        } catch { /* ignore */ }
+      }, [text]);
 
       const scrollRef = React.useRef(null);
       const rootRef = React.useRef(null);
@@ -505,8 +661,11 @@ window.__ModuleLoader__.load({
       const markProgrammatic = () => {
         programmatic.current = true;
         const clear = () => { programmatic.current = false; };
-        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(clear);
-        else clear();
+        let scheduled = false;
+        if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(clear); scheduled = true; }
+        /* 窗口不可见时 rAF 会暂停，标志就可能一直挂着（用户的向上滚动会被永远忽略）→ 定时器兜底 */
+        if (typeof setTimeout === 'function') { setTimeout(clear, 250); scheduled = true; }
+        if (!scheduled) clear();
       };
 
       // 跟随最新内容（FOLLOW='tail'）或钉在开头（FOLLOW='top'）。
@@ -525,7 +684,9 @@ window.__ModuleLoader__.load({
         if (!stick.current) return;
         markProgrammatic();
         el.scrollTop = el.scrollHeight;
-      });
+        /* 只在内容/形态真的变了才滚 —— 没有依赖数组时，任何一次重渲染都会读
+         * scrollHeight（强制同步布局），而流式期间每秒要重渲染几十次。 */
+      }, [text, expanded, running]);
 
       const handleScroll = React.useCallback(() => {
         if (programmatic.current) return;           // 自己触发的滚动，不算用户操作
@@ -535,17 +696,24 @@ window.__ModuleLoader__.load({
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       }, []);
 
-      // 是否可滚动 → 决定底部淡出遮罩
-      React.useEffect(() => {
+      // 是否可滚动 → 决定底部淡出遮罩。
+      // ⚠️ ResizeObserver 只在挂载时建一次：早先依赖 [text, …]，流式期间每秒
+      //    创建销毁几十个观察器。真正的判定逻辑放进 ref，回调里读最新值。
+      const updateCanScrollRef = React.useRef(null);
+      updateCanScrollRef.current = () => {
         const el = scrollRef.current;
-        if (el === null || expanded) { setCanScroll(false); return undefined; }
-        const update = () => setCanScroll(el.scrollHeight > el.clientHeight + 1);
-        update();
+        if (el === null || expanded) { setCanScroll(false); return; }
+        setCanScroll(el.scrollHeight > el.clientHeight + 1);
+      };
+      useLayout(() => { updateCanScrollRef.current(); }, [text, expanded, running]);
+      React.useEffect(() => {
         if (typeof ResizeObserver === 'undefined') return undefined;
-        const ro = new ResizeObserver(update);
+        const el = scrollRef.current;
+        if (el === null) return undefined;
+        const ro = new ResizeObserver(() => updateCanScrollRef.current());
         ro.observe(el);
         return () => ro.disconnect();
-      }, [text, expanded, running]);
+      }, []);
 
       const seconds = props.seconds;
       const title = running
@@ -571,6 +739,15 @@ window.__ModuleLoader__.load({
         h('span', { className: 'dst-think-icon', key: 'icon', 'aria-hidden': true },
           IconThink ? h(IconThink, { size: 14 }) : h('span', null, '✦')),
         h('span', { className: 'dst-think-title', key: 'title' }, title),
+        running ? h('span', { key: 'sr', className: 'dst-sr' }, tr('think.srRunning')) : null,
+        text ? h('button', {
+          key: 'copy',
+          type: 'button',
+          className: 'dst-think-copy',
+          title: tr('think.copy'),
+          'aria-label': tr('think.copy'),
+          onClick: (event) => { event.stopPropagation(); copy(); },
+        }, copied ? tr('think.copied') : tr('think.copy')) : null,
         h('span', { className: 'dst-think-chevron', key: 'chev', 'aria-hidden': true }, '›'),
       ]);
 
@@ -606,11 +783,11 @@ window.__ModuleLoader__.load({
      * assistant-step 渲染器（遮蔽出厂 AssistantNodeView）
      * ================================================================== */
     function DeepSeekAssistantStep(props) {
-      const { node, groupPart, renderMessageImages, fileMentions, turnProcess, useDisclosure } = props;
+      const { node, groupPart, renderMessageImages, fileMentions, turnProcess, useDisclosure, useTurnData } = props;
       /* 自带翻译器优先：注入的 t 属于 chat 命名空间，未必提供给我们这个条目。 */
       const tr = typeof props.pluginT === 'function'
         ? props.pluginT
-        : (typeof props.t === 'function' ? props.t : (k) => k);
+        : (typeof props.t === 'function' ? props.t : IDENTITY_T);
       const on = useEnabled();
 
       const data = (node && node.data) || {};
@@ -639,17 +816,20 @@ window.__ModuleLoader__.load({
           const loc = node.location;
           const turn = loc.kind === 'turn' || loc.kind === 'step' ? loc.turn : undefined;
           if (!turn || turn.status !== 'closed' || data.finalNode === undefined) return undefined;
+          /* 与出厂同构：只有「收尾的那一节点」才解析文件提及。少了这道守卫，
+           * 非收尾步骤也会解析一遍 —— 而同一个节点会以 reasoning / response
+           * 两种 groupPart 各渲染一次。 */
+          const tail = typeof useTurnData === 'function' ? useTurnData('turn-tail') : undefined;
+          const closing = tail && tail.closing ? tail.closing.finalNode : undefined;
+          if (closing !== undefined && closing !== null && closing.seq !== data.finalNode.seq) return undefined;
           return fileMentions({ turn, seq: data.finalNode.seq, openFile: props.openFile });
         } catch { return undefined; }
-      }, [fileMentions, node, data.finalNode, props.openFile]);
+      }, [fileMentions, node, data.finalNode, props.openFile, useTurnData]);
 
       const labels = React.useMemo(() => markdownLabels(tr), [tr]);
+      // 与出厂同构：本地绝对路径走鉴权文件路由，而不是直接拼 URL
       const pathImages = React.useMemo(() => ({
-        resolve: (value) => {
-          try {
-            return new URL(decodeURIComponent(String(value).split(/[?#]/u)[0]), document.baseURI).href;
-          } catch { return undefined; }
-        },
+        resolve: (value) => localPathMediaUrl(document.baseURI, value),
       }), []);
 
       const out = [];
@@ -677,7 +857,7 @@ window.__ModuleLoader__.load({
            */
           const tail = !blocks.slice(i + 1).some((b) => b && (b.kind === 'text' || b.kind === 'reasoning'));
           const panel = on
-            ? h(ThinkingPanel, {
+            ? h(Expandable, {
               text: block.text,
               running: running && tail,
               stopped: interrupted,
@@ -707,15 +887,26 @@ window.__ModuleLoader__.load({
                 images: group.map((b) => ({ attachment: b.attachment })),
                 align: 'start',
               })));
-          } catch { /* 图片渲染失败不影响文本 */ }
+          } catch (error) {
+            /* 静默吞掉过一次：图片整组消失且毫无线索。至少留一行日志。 */
+            try { console.warn('[dsh-thinking-panel] renderMessageImages failed', error); } catch { /* ignore */ }
+          }
           continue;
         }
 
         if (block.kind === 'tool-call') continue; // 工具调用是独立节点
 
+        /* 与出厂同构：payload 取 other 包装体里的真实载荷（block.block），标签与
+         * truncatedLabel 也照抄 —— 否则未知块显示的是整个包装对象、还丢了截断提示。 */
+        const payload = block.block !== undefined ? block.block : block;
         out.push(JsonBlock
-          ? h(JsonBlock, { key: i, label: 'Unknown block', payload: block })
-          : h('div', { key: i, className: 'dst-plain' }, JSON.stringify(block)));
+          ? h(JsonBlock, {
+            key: i,
+            label: tr('plain.unknownBlock'),
+            payload,
+            truncatedLabel: (total) => tr('plain.truncated', { total }),
+          })
+          : h('div', { key: i, className: 'dst-plain' }, safeStringify(payload)));
       }
 
       if (out.length === 0) return null;
@@ -724,8 +915,12 @@ window.__ModuleLoader__.load({
       const stoppedBadge = interrupted && (groupPart === undefined || groupPart === 'response')
         ? h('span', { key: 'stopped', className: 'dst-stopped' }, tr('think.stopped'))
         : null;
+      /* 与出厂 AssistantMarkdown 同构：外面套 .dst-root（字号/行高/正文色基线）与
+       * .dst-body（16px 块间距）。少了它们，多块消息的行距与段间距会和出厂不一样。 */
       return h(ThinkingBoundary, { blocks },
-        h(React.Fragment, null, stoppedBadge === null ? out : out.concat([stoppedBadge])));
+        h('div', { className: 'dst-root', 'data-streaming': running || undefined },
+          h('div', { className: 'dst-body' },
+            stoppedBadge === null ? out : out.concat([stoppedBadge]))));
     }
 
     /* ================================================================== *
@@ -789,32 +984,42 @@ window.__ModuleLoader__.load({
       ]);
     }
 
-    function SettingsRow(props) {
-      const t = props.t;
+    /**
+     * 设置页 —— 注册在 `settings.section`，也就是设置左侧导航里**独立的一栏**。
+     *
+     * 早先挂在 `settings.general.item`（通用设置里的一行）：位置太深，也塞不下
+     * 现在这些开关。`label` 是个 thunk，跟随语言切换。
+     */
+    function SettingsSection(props) {
+      const tr = typeof props.t === 'function' ? props.t : IDENTITY_T;
       const on = useEnabled();
       const auto = useAutoReveal();
-      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+      return h('div', { className: 'dst-page' }, [
+        h('div', { key: 'title', className: 'dst-page-title' }, tr('settings.title')),
+        compatIssues.length > 0
+          ? h('div', { key: 'compat', className: 'dst-page-compat' }, tr('settings.compatWarn', { n: compatIssues.length }))
+          : null,
         h(ToggleRow, {
-          key: 'main',
-          title: t('settings.title'),
-          desc: t('settings.desc'),
+          key: 'enabled',
+          title: tr('settings.toggle'),
+          desc: tr('settings.desc'),
           checked: on,
-          label: t('settings.toggle'),
-          onLabel: t('settings.on'),
-          offLabel: t('settings.off'),
+          label: tr('settings.toggle'),
+          onLabel: tr('settings.on'),
+          offLabel: tr('settings.off'),
           onChange: (next) => setEnabled(next),
         }),
         h(ToggleRow, {
           key: 'auto-reveal',
-          title: t('settings.autoReveal.title'),
-          desc: t('settings.autoReveal.desc'),
+          title: tr('settings.autoReveal.title'),
+          desc: tr('settings.autoReveal.desc'),
           checked: auto,
-          label: t('settings.autoReveal.toggle'),
-          onLabel: t('settings.autoReveal.on'),
-          offLabel: t('settings.autoReveal.off'),
+          label: tr('settings.autoReveal.toggle'),
+          onLabel: tr('settings.autoReveal.on'),
+          offLabel: tr('settings.autoReveal.off'),
           onChange: (next) => setAutoReveal(next),
         }),
-        h(UpdateRow, { key: 'update', t }),
+        h(UpdatePanel, { key: 'update', t: tr }),
       ]);
     }
 
@@ -833,7 +1038,7 @@ window.__ModuleLoader__.load({
      */
     const UPDATE_READONLY = new Set(['status']);
 
-    function UpdateRow(props) {
+    function UpdatePanel(props) {
       const t = props.t;
       const [state, setState] = React.useState(null);
       const [busy, setBusy] = React.useState('');
@@ -931,23 +1136,43 @@ window.__ModuleLoader__.load({
         },
       }, busy === method ? t('update.working') : label);
 
-      return h('div', {
-        style: {
-          display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
-          padding: '6px 0 10px', minWidth: 0,
-          fontSize: '12px', lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)',
-        },
-      }, [
-        h('span', { key: 'ver' }, `v${state.runningVersion}`),
-        state.hasUpdate ? h('span', {
-          key: 'arrow',
-          style: { color: 'var(--dsw-alias-label-secondary)' },
-        }, `→ v${state.latestVersion}`) : null,
-        h('span', { key: 'spacer', style: { flex: '1 1 auto' } }),
-        note ? h('span', { key: 'note', style: { color: tone[note.kind] ?? tone.info } }, note.text) : null,
-        btn(t('update.check'), 'check', undefined, false),
-        state.hasUpdate ? btn(t('update.install'), 'install', { version: state.latestVersion }, true) : null,
-        state.lastAppliedAt ? btn(t('update.rollback'), 'rollback', undefined, false) : null,
+      const mode = typeof state.mode === 'string' ? state.mode : 'auto';
+      return h('div', { className: 'dst-update' }, [
+        h(ToggleRow, {
+          key: 'inject',
+          title: t('settings.inject.title'),
+          desc: t('settings.inject.desc'),
+          checked: mode !== 'off',
+          label: t('settings.inject.toggle'),
+          onLabel: t('settings.on'),
+          offLabel: t('settings.off'),
+          onChange: (next) => run('mode', { mode: next ? 'auto' : 'off' }),
+        }),
+        h(ToggleRow, {
+          key: 'auto-update',
+          title: t('settings.autoUpdate.title'),
+          desc: t('settings.autoUpdate.desc'),
+          checked: state.autoUpdate !== false,
+          label: t('settings.autoUpdate.toggle'),
+          onLabel: t('settings.on'),
+          offLabel: t('settings.off'),
+          onChange: (next) => run('auto-update', { enabled: next }),
+        }),
+        h('div', { key: 'row', className: 'dst-update-row' }, [
+          h('span', { key: 'ver', className: 'dst-update-ver' }, `v${state.runningVersion}`),
+          state.hasUpdate
+            ? h('span', { key: 'arrow', className: 'dst-update-arrow' }, `→ v${state.latestVersion}`)
+            : null,
+          note ? h('span', { key: 'note', style: { color: tone[note.kind] ?? tone.info } }, note.text) : null,
+          h('span', { key: 'spacer', style: { flex: '1 1 auto' } }),
+          btn(t('update.check'), 'check', undefined, false),
+          state.hasUpdate ? btn(t('update.install'), 'install', { version: state.latestVersion }, true) : null,
+          /* 回退目标由 Host 算好（上一个**装过**的版本），不是当前版本 ——
+           * 否则重启之后点回退只会把当前版本再装一遍。 */
+          state.previousVersion
+            ? btn(t('update.rollbackTo', { v: state.previousVersion }), 'rollback', undefined, false)
+            : null,
+        ]),
       ]);
     }
 
@@ -982,9 +1207,16 @@ window.__ModuleLoader__.load({
           name: 'shell.overlay', id: 'thinking-panel-style', order: 90,
         }, StyleSeat));
 
-        ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-          name: 'settings.general.item', id: 'thinking-panel-settings', order: 45,
-        }, () => h(SettingsRow, { t })));
+        /* 设置左侧导航里**独立的一栏**（`settings.section`）。
+         * 电脑控制 / 壁纸引擎 / Token 用量都用这个槽位，已实测可用；
+         * `label` 是 thunk，跟随语言切换。 */
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: 'thinking-panel',
+          order: 62,
+          label: () => t('settings.navLabel'),
+          locale: NS,
+        }, (slotProps) => h(SettingsSection, { t: slotProps && slotProps.t ? slotProps.t : t })));
 
         // 遮蔽 assistant-step。
         // 运行时规则（实测于 DSH 0.2.0-rc.2 控制台）：

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import {
-  applyPayload, compareSemver, extractPackageFiles, isAllowedPayloadPath,
+  applyPayload, compareSemver, createSelfUpdater, extractPackageFiles, isAllowedPayloadPath,
   parseSemver, parseTar, resolveSafePath, rollbackPayload,
 } from '../self-update.js';
 
@@ -139,6 +139,69 @@ console.log('\n[5] applyPayload / rollbackPayload（临时目录）');
   } catch { threw = true; }
   check('payload 含越界路径时整体抛错', threw === true);
   check('抛错后 client.js 未被改动（预检生效）', readFileSync(join(pkg, 'client.js'), 'utf8') === 'NEWER');
+
+  rmSync(root, { recursive: true, force: true });
+}
+
+console.log('\n[6] createSelfUpdater：回滚目标 / 并发互斥 / 自动更新');
+{
+  const root = mkdtempSync(join(tmpdir(), 'dst-engine-'));
+  const pkg = join(root, 'pkg');
+  const dataDir = join(root, 'data');
+  mkdirSync(pkg, { recursive: true });
+  const writePkg = (version) => writeFileSync(join(pkg, 'package.json'),
+    JSON.stringify({ name: 'dsh-thinking-panel', version }));
+  writePkg('0.1.0');
+  writeFileSync(join(pkg, 'client.js'), 'CLIENT-0.1.0');
+
+  const tarballOf = (version) => gzipSync(makeTar([
+    ['package/package.json', JSON.stringify({ name: 'dsh-thinking-panel', version })],
+    ['package/client.js', `CLIENT-${version}`],
+  ]));
+  let release = '0.2.0';
+  const fetchStub = async (url) => {
+    if (String(url).endsWith('/latest')) {
+      return { ok: true, arrayBuffer: async () => Buffer.from(JSON.stringify({ version: release }), 'utf8') };
+    }
+    const version = String(url).split('/').pop().replace('dsh-thinking-panel-', '').replace('.tgz', '');
+    return { ok: true, arrayBuffer: async () => tarballOf(version) };
+  };
+  const make = (running) => createSelfUpdater({ packageDir: pkg, dataDir, runningVersion: running, fetch: fetchStub });
+
+  const updater = make('0.1.0');
+  const checked = await updater.check();
+  check('check 读到 registry 上的最新版',
+    checked.ok === true && checked.latestVersion === '0.2.0' && checked.hasUpdate === true, JSON.stringify(checked));
+
+  const installed = await updater.install();
+  check('install 装上了最新版', installed.ok === true && installed.version === '0.2.0', JSON.stringify(installed));
+  check('install 后磁盘版本已变', JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')).version === '0.2.0');
+  check('install 记下了 previousVersion',
+    updater.status().previousVersion === '0.1.0', String(updater.status().previousVersion));
+
+  /* 并发互斥：第二个操作必须在第一个完成前被拒（桌面端 + Web GUI 会同时点）。
+   * 这里用两次 check —— 它同样上锁，又不会改动 previousVersion。 */
+  const [a, b] = await Promise.all([updater.check(), updater.check()]);
+  check('并发操作被互斥挡掉一个（不会交错写文件）',
+    (a.ok === false && String(a.error).includes('正在进行')) || (b.ok === false && String(b.error).includes('正在进行')),
+    `${JSON.stringify(a)} / ${JSON.stringify(b)}`);
+
+  /* 模拟重启：新引擎 + 同一数据目录。runningVersion 变成 0.2.0 ——
+   * 此时「回滚」必须回到 previousVersion(0.1.0)，而不是把 0.2.0 再装一遍。 */
+  const afterRestart = make('0.2.0');
+  const rolled = await afterRestart.rollback();
+  check('重启后回滚回到上一个装过的版本（不是当前版本）',
+    rolled.ok === true && rolled.version === '0.1.0', JSON.stringify(rolled));
+  check('回滚后磁盘版本是 0.1.0', JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')).version === '0.1.0');
+  check('回滚把目标记进 holdVersion', afterRestart.status().holdVersion === '0.1.0');
+
+  release = '0.3.0';
+  const auto = await afterRestart.autoUpdate();
+  check('autoUpdate 查到新版就直接装', auto.ok === true && auto.version === '0.3.0', JSON.stringify(auto));
+
+  const off = afterRestart.setAutoUpdate(false);
+  const skipped = await afterRestart.autoUpdate();
+  check('关掉自动更新后 autoUpdate 直接拒绝', off.ok === true && skipped.ok === false, JSON.stringify(skipped));
 
   rmSync(root, { recursive: true, force: true });
 }

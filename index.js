@@ -19,7 +19,7 @@
  * 另外本文件还负责注册**自更新**的 HTTP 端点（见文件末尾）：更新要读写文件系统，
  * 只能跑在 Host 侧；Client 半部通过这几个端点读状态、触发动作。
  */
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,59 +150,117 @@ function compatReport(problem, detail) {
  */
 export function apply(ctx, config) {
   const rawMode = config && typeof config.mode === 'string' ? config.mode : 'auto';
-  const mode = MODES.includes(rawMode) ? rawMode : 'auto';
+  const configured = MODES.includes(rawMode) ? rawMode : 'auto';
 
-  /* 自更新端点与语言注入**完全独立**：即使用户把 mode 设成 off（只想关掉注入），
-   * 也照样要注册。⚠️ 早先这一句写在函数末尾、且在 off 短路（text === null）之后 ——
-   * 于是 mode=off 的用户会发现 /update/status 变成 404，整个自更新面板凭空消失。 */
-  registerUpdateRoutes(ctx);
-
-  const text = reasoningLanguageRule(mode);
-  if (text === null) return;
+  /* `cordis.patch.yml` 里的 mode 只是**默认值**：用户在设置页改过之后以状态文件为准 ——
+   * 否则「改配置」和「改设置」会互相覆盖。 */
+  const store = createModeStore(configured);
+  const injection = createInjection(ctx);
 
   // 兼容性自检：两个注入通道分别判断，缺一个就降级一个
-  const hasSection = typeof ctx.systemPrompt?.section === 'function';
-  const hasContext = typeof ctx.systemPrompt?.context === 'function';
-  if (!hasSection && !hasContext) {
+  if (!injection.hasSection && !injection.hasContext) {
     compatReport(
       'systemPrompt.section 与 systemPrompt.context 都不可用',
       'Host 半部无法注入任何规则，语言跟随不会生效（样式部分不受影响）。',
     );
-    return;
-  }
-  if (!hasContext) {
+  } else if (!injection.hasContext) {
     compatReport(
       'systemPrompt.context 不可用',
       '只能注入系统提示词段落。实测仅靠段落时语言跟随会明显变弱（CJK 0.096 量级）。',
     );
   }
+  injection.applyMode(store.get());
 
-  // ① 系统提示词段落：排在最末（order 10300 > DEPLOYMENT_PERSONA_SUFFIX 10200）
-  if (hasSection) {
-    ctx.effect(
-      () => ctx.systemPrompt.section({
-        name: SECTION_NAME,
-        order: SECTION_ORDER,
-        text,
-      }),
-      'dsh-thinking-panel: reasoning-language section',
-    );
+  /* 自更新端点与语言注入**完全独立**：即使用户把 mode 设成 off（只想关掉注入），
+   * 也照样要注册。⚠️ 早先这一句写在函数末尾、且在 off 短路之后 ——
+   * 于是 mode=off 的用户会发现 /update/status 变成 404，整个自更新面板凭空消失。 */
+  registerUpdateRoutes(ctx, {
+    getMode: () => store.get(),
+    setMode: (next) => {
+      const result = store.set(next);
+      if (result.ok) injection.applyMode(result.mode);
+      return result;
+    },
+  });
+}
+
+/* ================================================================== *
+ * 注入模式：持久化 + 可运行时开关的语言注入
+ * ================================================================== */
+
+/** 插件数据目录（与自更新共用）。 */
+function pluginDataDir() {
+  const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.length > 0
+    ? process.env.DSH_HOME
+    : join(homedir(), '.dsh');
+  return join(dshHome, 'plugin-data', 'dsh-thinking-panel');
+}
+
+/** 把 mode 存在插件数据目录里；`cordis.patch.yml` 只提供首次运行的默认值。 */
+function createModeStore(fallback) {
+  const file = join(pluginDataDir(), 'settings.json');
+  let value = fallback;
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed && typeof parsed.mode === 'string' && MODES.includes(parsed.mode)) value = parsed.mode;
+  } catch { /* 首次运行或文件损坏：用配置里的默认值 */ }
+  return {
+    get: () => value,
+    /** @returns {{ok:boolean, mode?:string, error?:string}} */
+    set: (mode) => {
+      if (!MODES.includes(mode)) return { ok: false, error: `unknown mode: ${String(mode)}` };
+      value = mode;
+      try {
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, `${JSON.stringify({ mode }, null, 2)}\n`);
+      } catch (error) {
+        // 落盘失败不阻止本次生效，只是重启后会回到旧值
+        try { console.warn(`[dsh-thinking-panel] 设置落盘失败：${error.message}`); } catch { /* ignore */ }
+      }
+      return { ok: true, mode };
+    },
+  };
+}
+
+/**
+ * 语言注入 —— **可运行时开关**。
+ *
+ * 段落/上下文的文本注册后不能原地改，所以切换模式的做法是
+ * 「先全部注销 → 再按新模式注册」。顺序不能反：同层同名重复注册会抛错。
+ */
+function createInjection(ctx) {
+  const hasSection = typeof ctx.systemPrompt?.section === 'function';
+  const hasContext = typeof ctx.systemPrompt?.context === 'function';
+  let disposers = [];
+
+  function disposeAll() {
+    for (const dispose of disposers) {
+      try { if (typeof dispose === 'function') dispose(); } catch { /* ignore */ }
+    }
+    disposers = [];
   }
 
-  // ② 运行时上下文：既进日志、又紧贴用户回合，离生成点最近（实测更有效）
-  const context = reasoningLanguageContext(mode);
-  if (context !== null && hasContext) {
-    ctx.effect(
-      () => ctx.systemPrompt.context({
-        name: CONTEXT_NAME,
-        order: CONTEXT_ORDER,
-        text: context,
-      }),
-      'dsh-thinking-panel: reasoning-language context',
-    );
+  function applyMode(mode) {
+    disposeAll();
+    const text = reasoningLanguageRule(mode);
+    if (text === null) return { ok: true, mode, active: false };   // off：什么都不注册
+    if (hasSection) {
+      disposers.push(ctx.effect(
+        () => ctx.systemPrompt.section({ name: SECTION_NAME, order: SECTION_ORDER, text }),
+        'dsh-thinking-panel: reasoning-language section',
+      ));
+    }
+    const context = reasoningLanguageContext(mode);
+    if (context !== null && hasContext) {
+      disposers.push(ctx.effect(
+        () => ctx.systemPrompt.context({ name: CONTEXT_NAME, order: CONTEXT_ORDER, text: context }),
+        'dsh-thinking-panel: reasoning-language context',
+      ));
+    }
+    return { ok: true, mode, active: true };
   }
 
-  // 自更新端点已在函数开头注册（见那里的说明）
+  return { applyMode, hasSection, hasContext };
 }
 
 /* ================================================================== *
@@ -215,22 +273,21 @@ export function apply(ctx, config) {
 const ROUTE_PREFIX = '/dsh-thinking-panel/update';
 
 /** 会改动文件系统或状态的方法，必须走 POST（GET 只用于读状态，可被缓存/预取）。 */
-const MUTATING = new Set(['check', 'install', 'rollback', 'auto-update']);
+const MUTATING = new Set(['check', 'install', 'rollback', 'auto-update', 'mode']);
 
-function registerUpdateRoutes(ctx) {
+/** 启动后多久做一次自动更新检查（不阻塞启动）。 */
+const AUTO_UPDATE_DELAY_MS = 8000;
+
+function registerUpdateRoutes(ctx, settings = {}) {
   if (typeof ctx.inject !== 'function') return;
   ctx.inject(['connection', 'webServer'], (webCtx) => {
     let updater = null;
     try {
       const packageDir = dirname(fileURLToPath(import.meta.url));
-      const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.length > 0
-        ? process.env.DSH_HOME
-        : join(homedir(), '.dsh');
-      const dataDir = join(dshHome, 'plugin-data', 'dsh-thinking-panel');
       const manifest = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
       updater = createSelfUpdater({
         packageDir,
-        dataDir,
+        dataDir: pluginDataDir(),
         runningVersion: typeof manifest.version === 'string' ? manifest.version : '0.0.0',
         log: (message) => { try { console.log(`[dsh-thinking-panel] ${message}`); } catch { /* ignore */ } },
       });
@@ -241,11 +298,18 @@ function registerUpdateRoutes(ctx) {
     }
 
     const routes = {
-      status: () => updater.status(),
+      // status 顺带把「语言注入模式」带上，设置页一次请求就能渲染完整
+      status: () => ({
+        ...updater.status(),
+        mode: typeof settings.getMode === 'function' ? settings.getMode() : null,
+      }),
       check: () => updater.check(),
-      install: (args) => updater.install(args.version),
-      rollback: (args) => updater.rollback(args.version),
-      'auto-update': (args) => updater.setAutoUpdate(args.enabled),
+      install: (args) => updater.install(args && args.version),
+      rollback: (args) => updater.rollback(args && args.version),
+      'auto-update': (args) => updater.setAutoUpdate(args && args.enabled),
+      mode: (args) => (typeof settings.setMode === 'function'
+        ? settings.setMode(args && args.mode)
+        : { ok: false, error: 'mode 未接线' }),
     };
 
     const handler = async (req, res) => {
@@ -293,5 +357,20 @@ function registerUpdateRoutes(ctx) {
       () => webCtx.webServer.register({ kind: 'prefix', path: ROUTE_PREFIX, handler }),
       'dsh-thinking-panel: self-update routes',
     );
+
+    /* 自动更新：启动后延迟跑一次，用户不用点任何东西。
+     * 关掉开关的人在 autoUpdate() 里会直接短路；失败也不打扰用户 —— 状态里能看到 lastError。 */
+    try {
+      if (updater.status().autoUpdate) {
+        const timer = setTimeout(() => {
+          updater.autoUpdate().then((result) => {
+            if (result && result.ok && result.version) {
+              console.log(`[dsh-thinking-panel] 已自动更新到 ${result.version}，重启 DSH 后生效`);
+            }
+          }, () => { /* ignore */ });
+        }, AUTO_UPDATE_DELAY_MS);
+        if (timer && typeof timer.unref === 'function') timer.unref();
+      }
+    } catch { /* ignore */ }
   });
 }

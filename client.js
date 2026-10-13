@@ -189,6 +189,8 @@ window.__ModuleLoader__.load({
       'update.installed': '已更新到 v{v}',
       'update.installedRestart': '已更新到 v{v}，重启 DSH 后生效',
       'update.failed': '更新失败，详见控制台',
+      'update.connecting': '正在读取自更新端点…',
+      'update.endpointDown': '自更新端点不可用：{msg}（插件其余功能不受影响，可重载 DSH 再试）',
     };
     const en = {
       'settings.title': 'Thinking Panel',
@@ -254,6 +256,8 @@ window.__ModuleLoader__.load({
       'update.installed': 'Updated to v{v}',
       'update.installedRestart': 'Updated to v{v} — restart DSH to apply',
       'update.failed': 'Update failed; see the console',
+      'update.connecting': 'Reading the self-update endpoint…',
+      'update.endpointDown': 'Self-update endpoint unavailable: {msg} (the rest of the plugin is unaffected; try reloading DSH)',
     };
 
     /* ================================================================== *
@@ -1535,6 +1539,8 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState(null);
       const [busy, setBusy] = React.useState('');
       const [note, setNote] = React.useState(null);
+      /** 端点失败的原因 —— 不再静默隐藏整块（见下面的提前返回）。 */
+      const [endpointError, setEndpointError] = React.useState('');
 
       /**
        * 卸载保护 + 重入守卫。两个都踩过：
@@ -1573,8 +1579,15 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         let alive = true;
         call('status')
-          .then((s) => { if (alive && s && s.ok) setState(s); })
-          .catch(() => { /* 端点不可用：保持 null，整块不渲染 */ });
+          .then((s) => {
+            if (!alive) return;
+            if (s && s.ok) setState(s);
+            else setEndpointError(s && s.error ? String(s.error) : 'status returned ok:false');
+          })
+          .catch((error) => {
+            if (!alive) return;
+            setEndpointError(String(error && error.message ? error.message : error));
+          });
         return () => { alive = false; };
       }, [call]);
 
@@ -1588,7 +1601,17 @@ window.__ModuleLoader__.load({
       }
 
       // ⚠️ 这个提前返回必须放在**所有 hook 之后**
-      if (state === null) return null;
+      if (state === null) {
+        /* ⚠️ 以前这里是 `return null`：端点一挂，整块「更新」凭空消失 ——
+         * 注入开关、自动更新开关、版本行、检查更新按钮全都不见了，
+         * 而用户毫无线索（实测反馈：「更新相关的选项不知道去哪里了」）。
+         * 「自更新不该成为插件能否使用的前提」这个初衷不变，
+         * 但**失败必须可见**，至少把原因写出来。 */
+        return h('div', { className: 'dst-page-compat' },
+          endpointError === ''
+            ? t('update.connecting')
+            : t('update.endpointDown', { msg: endpointError }));
+      }
 
       const run = async (method, body) => {
         if (inFlight.current) return;

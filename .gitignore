@@ -22,3 +22,6 @@ desktop.ini
 .env
 .env.*
 !.env.example
+
+# 审查者留下的临时脚本（不进仓库）
+.tmp-review/

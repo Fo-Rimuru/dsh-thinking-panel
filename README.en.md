@@ -117,7 +117,7 @@ Please do this in order:
 ```powershell
 & $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel'
 # pin a version:
-& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.1.1'
+& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.2.0'
 ```
 
 > Requires `git`. Installs the latest commit on the default branch — no version semantics;

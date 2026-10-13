@@ -110,7 +110,7 @@ DSH 的插件安装命令只是把参数透传给 pnpm，格式是：
 ```powershell
 & $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel'
 # 锁定版本：
-& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.1.1'
+& $dsh plugin --profile desktop add 'github:Fo-Rimuru/dsh-thinking-panel#v0.2.0'
 ```
 
 > 需要本机有 `git`。装的是**默认分支最新提交**，没有版本语义；更新要 `pnpm update`。

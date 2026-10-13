@@ -145,7 +145,8 @@ window.__ModuleLoader__.load({
       'diag.ok': '无',
       'diag.hint': '样式悄悄变回出厂时，先看这里：哪一项是 0 或者「无」，就是那一环掉了。',
       'settings.preview.title': '思考预览行数',
-      'settings.preview.desc': '「思考中」折叠态显示几行推理正文。5 行是照官方客户端的观感定的。',
+      'settings.preview.desc': '「思考中」折叠态显示几行推理正文（1–20，拖动即时生效）。5 行是照官方客户端的观感定的。',
+      'settings.preview.unit': ' 行',
       'settings.desc': '让思考内容跟随用户输入语言；思考中多行滚动预览、展开看完整推理、左侧竖线、「已思考（用时 X 秒）」标题。',
       'settings.on': '已启用',
       'settings.off': '已停用',
@@ -211,7 +212,8 @@ window.__ModuleLoader__.load({
       'diag.ok': 'none',
       'diag.hint': 'If the styling silently reverts to shipped, look here first: whichever row is 0 or "none" is the broken link.',
       'settings.preview.title': 'Preview lines',
-      'settings.preview.desc': 'How many lines of reasoning the collapsed "thinking" state shows. Five matches the official client.',
+      'settings.preview.desc': 'How many lines of reasoning the collapsed "thinking" state shows (1–20, applies as you drag). Five matches the official client.',
+      'settings.preview.unit': ' lines',
       'settings.desc': 'Reasoning follows your language; multi-line live preview, expandable full reasoning, left rail, and a duration title.',
       'settings.on': 'Enabled',
       'settings.off': 'Disabled',
@@ -329,18 +331,22 @@ window.__ModuleLoader__.load({
 .dst-diag-hint{margin-top:6px;color:var(--dsw-alias-label-caption)}
 .dst-diag-issues{margin-top:6px;white-space:pre-wrap;
   color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-secondary))}
-/* 设置页的选项行（预览行数）：一排小按钮，选中态用品牌色 */
-.dst-choice{display:flex;align-items:center;gap:12px;padding:10px 0;min-width:0}
-.dst-choice-text{flex:1 1 auto;min-width:0}
-.dst-choice-title{font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}
-.dst-choice-desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
-.dst-choice-opts{flex:none;display:inline-flex;gap:6px}
-.dst-choice-btn{cursor:pointer;min-width:34px;height:26px;padding:0 8px;border-radius:6px;
-  border:1px solid var(--dsw-alias-border-l1);background:transparent;
-  color:var(--dsw-alias-label-secondary);font-size:12px;line-height:24px}
-.dst-choice-btn:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
-.dst-choice-btn[data-active]{border-color:transparent;background:var(--dsw-alias-brand-primary);
-  color:var(--dsw-alias-label-primary-inverted,var(--dsw-alias-bg-base))}
+/* 设置页的滑动条行（预览行数）。自绘是因为拿不到官方的 Slider —— primitives 只导出了 Switch。 */
+.dst-slider{display:flex;align-items:center;gap:12px;padding:10px 0;min-width:0}
+.dst-slider-text{flex:1 1 auto;min-width:0}
+.dst-slider-title{font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}
+.dst-slider-desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.dst-slider-ctl{flex:none;display:inline-flex;align-items:center;gap:10px}
+.dst-slider-input{width:150px;height:20px;-webkit-appearance:none;appearance:none;background:transparent;cursor:pointer}
+.dst-slider-input::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2)}
+.dst-slider-input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-5px;
+  border-radius:50%;background:var(--dsw-alias-brand-primary);border:2px solid var(--dsw-alias-bg-base);
+  box-shadow:0 0 0 1px var(--dsw-alias-border-l1)}
+.dst-slider-input:focus{outline:none}
+.dst-slider-input:focus-visible::-webkit-slider-thumb{
+  box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-brand-primary))}
+.dst-slider-val{flex:none;min-width:3.5em;text-align:right;font-size:12px;line-height:18px;
+  color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
 /* 「回到底部」：浮在面板右下的小胶囊，只在没贴底时出现（长推理翻上去之后不用一路拖回来） */
 .dst-scroll-bottom{position:absolute;right:8px;bottom:8px;z-index:2;cursor:pointer;
   display:inline-flex;align-items:center;justify-content:center;
@@ -421,17 +427,24 @@ window.__ModuleLoader__.load({
     /**
      * 思考预览的行数（3 / 5 / 8 / 12）。
      *
-     * 5 行是按官方观感定的，但屏幕高度和字号因人而异 —— 做成可选。
+     * 5 行是按官方观感定的，但屏幕高度和字号因人而异 —— 做成滑动条（1–20，步长 1）。
      * 用 CSS 变量下发：`.dst-think-preview` 的 `max-height` 直接乘它。
      */
     const PREVIEW_KEY = 'dsh-thinking-panel.preview-lines';
-    const PREVIEW_CHOICES = [3, 5, 8, 12];
+    const PREVIEW_MIN = 1;
+    const PREVIEW_MAX = 20;
     const previewSubs = new Set();
     let previewLines = PREVIEW_LINES;
     try {
       const raw = Number(window.localStorage.getItem(PREVIEW_KEY));
-      if (PREVIEW_CHOICES.includes(raw)) previewLines = raw;
+      if (Number.isFinite(raw) && raw >= PREVIEW_MIN && raw <= PREVIEW_MAX) previewLines = Math.round(raw);
     } catch { /* ignore */ }
+    /** 夹到合法范围（滑块的输入可能越界，也可能是 NaN）。 */
+    function clampPreview(next) {
+      const value = Math.round(Number(next));
+      if (!Number.isFinite(value)) return previewLines;
+      return Math.min(PREVIEW_MAX, Math.max(PREVIEW_MIN, value));
+    }
     /** 把当前行数写进 `:root` 的 CSS 变量（样式表里用 var() 读）。 */
     function applyPreviewLines() {
       try {
@@ -441,9 +454,10 @@ window.__ModuleLoader__.load({
       } catch { /* ignore */ }
     }
     function setPreviewLines(next) {
-      if (!PREVIEW_CHOICES.includes(next)) return;
-      previewLines = next;
-      try { window.localStorage.setItem(PREVIEW_KEY, String(next)); } catch { /* ignore */ }
+      const value = clampPreview(next);
+      if (value === previewLines) return;
+      previewLines = value;
+      try { window.localStorage.setItem(PREVIEW_KEY, String(value)); } catch { /* ignore */ }
       applyPreviewLines();
       for (const fn of previewSubs) fn();
     }
@@ -1408,23 +1422,31 @@ window.__ModuleLoader__.load({
      * 早先挂在 `settings.general.item`（通用设置里的一行）：位置太深，也塞不下
      * 现在这些开关。`label` 是个 thunk，跟随语言切换。
      */
-    /** 一排小按钮的选项行（目前只有「预览行数」用）。 */
-    function ChoiceRow(props) {
-      const { title, desc, value, options, onChange } = props;
-      return h('div', { className: 'dst-choice' }, [
-        h('div', { key: 'text', className: 'dst-choice-text' }, [
-          h('div', { key: 't', className: 'dst-choice-title' }, title),
-          h('div', { key: 'd', className: 'dst-choice-desc' }, desc),
+    /**
+     * 带滑动条的数值行（目前只有「预览行数」用）。
+     *
+     * 自绘 `<input type="range">` 而不是用官方组件：`ui-primitives` 只导出了 `Switch`，
+     * 拿不到官方的 Slider。样式尽量贴官方：品牌色圆点 + 细轨道。
+     */
+    function SliderRow(props) {
+      const { title, desc, value, min, max, unit, onInput } = props;
+      return h('div', { className: 'dst-slider' }, [
+        h('div', { key: 'text', className: 'dst-slider-text' }, [
+          h('div', { key: 't', className: 'dst-slider-title' }, title),
+          h('div', { key: 'd', className: 'dst-slider-desc' }, desc),
         ]),
-        h('div', { key: 'opts', className: 'dst-choice-opts' },
-          options.map((opt) => h('button', {
-            key: String(opt.value),
-            type: 'button',
-            className: 'dst-choice-btn',
-            'data-active': opt.value === value || undefined,
-            'aria-pressed': opt.value === value,
-            onClick: () => onChange(opt.value),
-          }, opt.label))),
+        h('div', { key: 'ctl', className: 'dst-slider-ctl' }, [
+          h('input', {
+            key: 'input',
+            type: 'range',
+            className: 'dst-slider-input',
+            min, max, step: 1,
+            value,
+            'aria-label': title,
+            onChange: (event) => onInput(event.target.value),
+          }),
+          h('span', { key: 'val', className: 'dst-slider-val' }, `${value}${unit || ''}`),
+        ]),
       ]);
     }
 
@@ -1458,13 +1480,15 @@ window.__ModuleLoader__.load({
           offLabel: tr('settings.autoReveal.off'),
           onChange: (next) => setAutoReveal(next),
         }),
-        h(ChoiceRow, {
+        h(SliderRow, {
           key: 'preview',
           title: tr('settings.preview.title'),
           desc: tr('settings.preview.desc'),
           value: preview,
-          options: PREVIEW_CHOICES.map((n) => ({ value: n, label: String(n) })),
-          onChange: (n) => setPreviewLines(n),
+          min: PREVIEW_MIN,
+          max: PREVIEW_MAX,
+          unit: tr('settings.preview.unit'),
+          onInput: (n) => setPreviewLines(n),
         }),
         h(UpdatePanel, { key: 'update', t: tr }),
         h(DiagBlock, { key: 'diag', t: tr }),

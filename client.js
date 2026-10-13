@@ -272,6 +272,8 @@ window.__ModuleLoader__.load({
 /* 与出厂 AssistantMarkdown.module.css 的 .stopped 同款：被中断的轮次挂一个小徽标 */
 .dst-stopped{border-radius:var(--dsw-radius-s,4px);background:var(--dsw-alias-interactive-bg-hover);
   color:var(--dsw-alias-label-tertiary);align-self:flex-start;padding:0 6px;font-size:11px;line-height:18px}
+/* 图标样板：只用来给设置导航项克隆 SVG，本身不占位、不可见。 */
+.dst-icon-sample{position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none}
 .dst-plain{color:var(--dsw-alias-label-primary)}
 .dst-plain-reasoning{margin:4px 0;color:var(--dsw-alias-label-secondary);
   font:var(--dsw-font-markdown-small);white-space:pre-wrap;max-height:6.5em;overflow:hidden}
@@ -927,7 +929,15 @@ window.__ModuleLoader__.load({
      * 样式座位与设置行
      * ================================================================== */
     function StyleSeat() {
-      return h('style', { 'data-plugin': 'dsh-thinking-panel' }, CSS);
+      return h(React.Fragment, null, [
+        h('style', { key: 'css', 'data-plugin': 'dsh-thinking-panel' }, CSS),
+        /* 藏一个图标样板：设置导航项的 DOM 补丁要克隆这里的 SVG，
+         * 这样它和「已思考」左边那个图标一定是同一个。 */
+        IconThink
+          ? h('span', { key: 'icon', className: 'dst-icon-sample', 'aria-hidden': true },
+            h(IconThink, { size: 16 }))
+          : null,
+      ]);
     }
 
     /**
@@ -1017,6 +1027,75 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 给设置导航项换上思考图标。
+     *
+     * ⚠️ DSH 的设置导航图标是 shell 里 `navIcon(id)` 的**硬编码映射**，第三方 section
+     * 一律拿兜底齿轮 —— 官方 SlotLabel 也没有 icon 选项（壁纸引擎的源码注释里写明了这点）。
+     * 所以只能像壁纸引擎 / 电脑控制那样做 DOM 补丁：给标签文字匹配的按钮打个 class，
+     * 再用 CSS mask 盖上我们自己的图标。**补丁失败就保留齿轮**，不抛、不重试。
+     */
+    const NAV_CLASS = 'dst-nav-icon';
+
+    function installNavIcon(labelOf) {
+      if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => {};
+      let styleEl = null;
+      let observer = null;
+      let frame = 0;
+      let disposed = false;
+
+      const sync = () => {
+        frame = 0;
+        if (disposed) return;
+        try {
+          const label = typeof labelOf === 'function' ? labelOf() : '';
+          if (!label) return;
+          if (styleEl === null) {
+            const sample = document.querySelector('.dst-icon-sample svg');
+            if (sample === null) return;                 // 样板还没渲染：等下一次 MutationObserver
+            let svg = sample.outerHTML;
+            if (!/xmlns=/.test(svg)) svg = svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+            const mask = `url("data:image/svg+xml,${encodeURIComponent(svg)}") center / contain no-repeat`;
+            styleEl = document.createElement('style');
+            styleEl.setAttribute('data-plugin', 'dsh-thinking-panel-nav');
+            styleEl.textContent = [
+              `.${NAV_CLASS}{display:flex;align-items:center}`,
+              `.${NAV_CLASS}>svg{display:none}`,
+              `.${NAV_CLASS}::before{content:"";flex:none;width:16px;height:16px;margin-right:8px;`,
+              `background:currentColor;-webkit-mask:${mask};mask:${mask}}`,
+            ].join('');
+            document.head.appendChild(styleEl);
+          }
+          for (const dialog of document.querySelectorAll('[role="dialog"]')) {
+            for (const button of dialog.querySelectorAll('nav button')) {
+              const mine = (button.textContent || '').trim() === label;
+              if (mine) button.classList.add(NAV_CLASS);
+              else button.classList.remove(NAV_CLASS);
+            }
+          }
+        } catch { /* 补丁失败＝保留齿轮 */ }
+      };
+
+      const schedule = () => {
+        if (frame !== 0) return;
+        try { frame = requestAnimationFrame(sync); } catch { sync(); }
+      };
+      sync();
+      try {
+        observer = new MutationObserver(schedule);
+        observer.observe(document.body, { childList: true, subtree: true });
+      } catch { /* ignore */ }
+
+      return () => {
+        disposed = true;
+        if (frame !== 0) { try { cancelAnimationFrame(frame); } catch { /* ignore */ } }
+        try { if (observer) observer.disconnect(); } catch { /* ignore */ }
+        try { if (styleEl) styleEl.remove(); } catch { /* ignore */ }
+        try { document.querySelectorAll(`.${NAV_CLASS}`).forEach((el) => el.classList.remove(NAV_CLASS)); }
+        catch { /* ignore */ }
+      };
+    }
+
+    /**
      * 设置页 —— 注册在 `settings.section`，也就是设置左侧导航里**独立的一栏**。
      *
      * 早先挂在 `settings.general.item`（通用设置里的一行）：位置太深，也塞不下
@@ -1076,6 +1155,21 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('');
       const [note, setNote] = React.useState(null);
 
+      /**
+       * 卸载保护 + 重入守卫。两个都踩过：
+       *  ① `await` 之后 setState 落在已卸载组件上；
+       *  ② `disabled` 要等重渲染才生效，快速双击能并发两次 install ——
+       *     而 install 是会**写文件系统**的操作（Host 侧另有一道互斥兜底）。
+       *
+       * ⚠️ 这两个 ref 必须在 `if (state === null) return null;` **之前**声明。
+       * 0.2.0 把它们写在了后面：首帧 `state` 还是 null，只跑 5 个 hook 就提前返回；
+       * status 回来后又接着跑 8 个 hook —— React 抛 #310（hooks 数量变化），
+       * 整个设置页被错误边界兜成一片空白。
+       */
+      const alive = React.useRef(true);
+      React.useEffect(() => () => { alive.current = false; }, []);
+      const inFlight = React.useRef(false);
+
       const call = React.useCallback(async (method, body) => {
         const readonly = UPDATE_READONLY.has(method) && body === undefined;
         const res = await fetch(`${UPDATE_ROUTE}/${method}`, readonly
@@ -1097,17 +1191,8 @@ window.__ModuleLoader__.load({
         return () => { alive = false; };
       }, [call]);
 
+      // ⚠️ 这个提前返回必须放在**所有 hook 之后**
       if (state === null) return null;
-
-      /**
-       * 卸载保护 + 重入守卫。两个都踩过：
-       *  ① `await` 之后 setState 落在已卸载组件上；
-       *  ② `disabled` 要等重渲染才生效，快速双击能并发两次 install ——
-       *     而 install 是会**写文件系统**的操作（Host 侧另有一道互斥兜底）。
-       */
-      const alive = React.useRef(true);
-      React.useEffect(() => () => { alive.current = false; }, []);
-      const inFlight = React.useRef(false);
 
       const run = async (method, body) => {
         if (inFlight.current) return;
@@ -1234,6 +1319,10 @@ window.__ModuleLoader__.load({
 
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-thinking-panel: dictionaries');
         const t = ctx.locale.bind(NS);
+
+        /* 设置导航项的图标：官方只给第三方兜底齿轮，这里做 DOM 补丁换成本插件的思考图标
+         *（失败就保留齿轮，不影响任何功能）。 */
+        ctx.effect(() => installNavIcon(() => t('settings.navLabel')), 'dsh-thinking-panel: settings nav icon');
 
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay', id: 'thinking-panel-style', order: 90,

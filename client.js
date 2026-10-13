@@ -1098,7 +1098,11 @@ window.__ModuleLoader__.load({
             styleEl.setAttribute('data-plugin', 'dsh-thinking-panel-nav');
             styleEl.textContent = [
               `.${NAV_CLASS}{display:flex;align-items:center}`,
-              `.${NAV_CLASS}>svg{display:none}`,
+              /* ⚠️ 用**后代**选择器 + :has() 两层保险：
+               * DSH 的图标是 <svg> 外面还套了一层，只写 `>svg` 隐藏不掉它 ——
+               * 表现就是「图标和文字之间多出一段空位」（实测反馈）。 */
+              `.${NAV_CLASS} svg{display:none}`,
+              `.${NAV_CLASS}>*:has(svg){display:none}`,
               `.${NAV_CLASS}::before{content:"";flex:none;width:16px;height:16px;margin-right:8px;`,
               `background:currentColor;-webkit-mask:${mask};mask:${mask}}`,
             ].join('');

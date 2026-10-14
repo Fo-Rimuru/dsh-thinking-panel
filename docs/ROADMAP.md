@@ -174,3 +174,31 @@
   用 `dsh plugin add` 装进副本 profile，看是否恢复激活；
 - 注意 `dsh-infinite-gen-5` 是 **Junction 且没有报错**，所以未必是链接类型本身，
   也可能是**依赖解析**：`link:` 的包不进 profile 的依赖树，而 DSH 可能按依赖树决定加载。
+
+---
+
+## 已解决：「插件静默不激活」（2026-10-14）
+
+排查用了 6 轮，**四个真因叠在一起**，全在插件自己这边：
+
+1. **`apply` 里直接读 `ctx.systemPrompt`** —— cordis 不允许访问未声明 inject 的服务，抛
+   `cannot get property "systemPrompt" without inject`，整个插件激活失败。
+   修：改成运行时 `ctx.inject(['systemPrompt'], promptCtx => …)` 可选获取。
+2. **静态 `export const inject = ['systemPrompt']` 也不能当硬门禁** —— 服务不满足时插件会
+   `pending` 而不激活（日志里那句 `1 entry did not activate` 就是它）。
+3. **路由注册包了 `webCtx.effect`** —— 回调执行了、`register` 也是函数，但路由始终 404。
+   修：直接 `webCtx.webServer.register(...)` 并把返回值交给 cordis（与 dsh-bottom-info-bar 一致）。
+4. **`connection` 在 `ctx.inject` 回调的 scope 里是 inactive context** —— 读属性就抛
+   `cannot get required service "connection" in inactive context`（端点从 404 变 500）。
+   修：不列进 inject，鉴权在 try/catch 里可选获取。
+
+另外补了两处包元数据：`main` 入口、`exports` 里的 `./cordis.patch.yml`
+（Node 的 `exports` 一旦存在，就封闭所有未列出的子路径）。
+
+**实测**（副本 profile `dst-test`）：端点 `404 → 500 → 200`。
+
+**教训**：这些失败在外部看起来**完全一样**（设置页无插件栏 + 端点 404），而 DSH 只在
+stderr 里打一句被截断的 warning。三个突破口：
+① `dsh --profile <p> --dump-config` 确认"配置树里有它"；
+② 在 `apply` / `ctx.inject` 回调里写 trace 落地文件，区分「没调用 / 回调没跑 / 注册失败」；
+③ 读 `resources/app.asar` 里的 `inactiveDiagnostic` —— 它会列出缺失的服务名。

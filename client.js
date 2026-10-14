@@ -140,6 +140,7 @@ window.__ModuleLoader__.load({
       'diag.degraded': '降级',
       'diag.primitives': '可用的官方组件',
       'diag.autoReveal': '自动展开（成功 / 尝试）',
+      'diag.autoRevealNotNeeded': '无需展开',
       'diag.navIcon': '导航图标补丁',
       'diag.compat': '兼容性提示',
       'diag.none': '无（已全部降级）',
@@ -210,6 +211,7 @@ window.__ModuleLoader__.load({
       'diag.degraded': 'degraded',
       'diag.primitives': 'Official components available',
       'diag.autoReveal': 'Auto-expand (ok / attempts)',
+      'diag.autoRevealNotNeeded': 'not needed',
       'diag.navIcon': 'Nav icon patch',
       'diag.compat': 'Compatibility notices',
       'diag.none': 'none (fully degraded)',
@@ -1373,10 +1375,17 @@ window.__ModuleLoader__.load({
         diag.jsonBlock ? 'JsonBlock' : null,
         diag.switch ? 'Switch' : null,
       ].filter(Boolean);
+      /* ⚠️ 「0 / 0」会被读成「功能坏了」，但它的真实含义是「这一轮本来就不需要展开」——
+       * 详细 / 完全展开模式下过程组本来就是展开的，代码故意不记 miss（见 revealProcessGroup
+       * 调用处的注释）。所以一次都没尝试过时直接说清楚，别摆两个零。 */
+      const revealAttempts = diag.revealHits + diag.revealMisses;
+      const revealText = revealAttempts === 0
+        ? tr('diag.autoRevealNotNeeded')
+        : `${diag.revealHits} / ${revealAttempts}`;
       const rows = [
         [tr('diag.render'), String(diag.rendered) + (diag.degraded > 0 ? `  ·  ${tr('diag.degraded')} ${diag.degraded}` : '')],
         [tr('diag.primitives'), primitives.length > 0 ? primitives.join(' · ') : tr('diag.none')],
-        [tr('diag.autoReveal'), `${diag.revealHits} / ${diag.revealHits + diag.revealMisses}`],
+        [tr('diag.autoReveal'), revealText],
         [tr('diag.navIcon'), diag.navIcon],
         [tr('diag.compat'), compatIssues.length > 0 ? String(compatIssues.length) : tr('diag.ok')],
       ];

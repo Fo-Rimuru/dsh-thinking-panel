@@ -300,7 +300,7 @@ match**. Only `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` are checked, using
 - **Bugs and feature requests**: [open an issue](https://github.com/Fo-Rimuru/dsh-thinking-panel/issues).
   The bug template asks for your DSH version, console output and a few self-checks — those save
   several rounds of back-and-forth.
-- **Pull requests** are welcome. Please run `node tools/verify.mjs` first and keep all 214 checks green (237 with a DSH source copy).
+- **Pull requests** are welcome. Please run `node tools/verify.mjs` first and keep all 218 checks green (238 with a DSH source copy).
 - **Planned but not built yet**: see [`docs/ROADMAP.md`](docs/ROADMAP.md) (0.2.0: injection toggle,
   auto-update toggle, one-click rollback entry, settings as its own section).
 - Please skim [Known limitations](#known-limitations) before filing — things like "language following
@@ -310,8 +310,8 @@ match**. Only `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` are checked, using
 
 ```powershell
 node tools/verify.mjs
-#   without DSH source → 214 passed, 0 failed, 23 skipped
-#   with DSH source    → 234 passed, 0 failed, 3 skipped
+#   without DSH source → 218 passed, 0 failed, 23 skipped
+#   with DSH source    → 238 passed, 0 failed, 3 skipped
 ```
 
 The 23 skipped ones cross-check the plugin against DSH's shipped source; supply an unpacked copy via

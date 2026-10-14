@@ -725,6 +725,10 @@ check('自检区块渲染到设置页',
 check('自检记录自动展开的成功/放弃次数与导航图标状态',
   /diag\.revealHits \+= 1/.test(clientSrc) && /diag\.revealMisses \+= 1/.test(clientSrc)
   && /diag\.navIcon = 'applied'/.test(clientSrc));
+/* 回归：一次都没尝试过时不能显示「0 / 0」—— 那会被读成「功能坏了」，
+ * 而真实含义是「这一轮本来就不需要展开」（详细模式下组本来就是展开的）。 */
+check('自检的自动展开：没尝试过时显示「无需展开」而不是 0 / 0',
+  /diag\.autoRevealNotNeeded/.test(clientSrc) && /revealAttempts === 0/.test(clientSrc));
 check('「回到底部」只在没贴底时出现',
   /const backToBottom = atBottom \? null : h\('button'/.test(clientSrc));
 // 回归：只挂在思考面板里不够 —— 面板在「最终回答」阶段已经不再变化（running=false、text 不变），

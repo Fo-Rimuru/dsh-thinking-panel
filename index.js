@@ -165,30 +165,45 @@ export function apply(ctx, config) {
   /* `cordis.patch.yml` 里的 mode 只是**默认值**：用户在设置页改过之后以状态文件为准 ——
    * 否则「改配置」和「改设置」会互相覆盖。 */
   const store = createModeStore(configured);
-  const injection = createInjection(ctx);
 
-  // 兼容性自检：两个注入通道分别判断，缺一个就降级一个
-  if (!injection.hasSection && !injection.hasContext) {
-    compatReport(
-      'systemPrompt.section 与 systemPrompt.context 都不可用',
-      'Host 半部无法注入任何规则，语言跟随不会生效（样式部分不受影响）。',
-    );
-  } else if (!injection.hasContext) {
-    compatReport(
-      'systemPrompt.context 不可用',
-      '只能注入系统提示词段落。实测仅靠段落时语言跟随会明显变弱（CJK 0.096 量级）。',
-    );
-  }
-  injection.applyMode(store.get());
+  /* ⚠️ 语言注入器**必须在 `ctx.inject` 的回调里创建**，不能直接 `createInjection(ctx)`。
+   *
+   * cordis 不允许访问未声明 inject 的服务：直接读 `ctx.systemPrompt` 会抛
+   * 「cannot get property "systemPrompt" without inject」，整个插件激活失败 ——
+   * 实测表现就是 `1 entry did not activate`：设置页看不到插件栏、自更新端点 404，
+   * 而 `--dump-config` 里配置树明明有它。
+   *
+   * 静态 `export const inject = ['systemPrompt']` 同样不能当硬门禁：服务不满足时插件会
+   * **pending 而不激活**，一样是静默失效。
+   *
+   * 运行时 `ctx.inject` 是**可选**语义（服务在就跑、不在就跳过），回调参数 `promptCtx`
+   * 既是合法 ctx（能用 effect），也能访问该服务 —— 两全。 */
+  let injection = null;
+  ctx.inject(['systemPrompt'], (promptCtx) => {
+    injection = createInjection(promptCtx);
+    if (!injection.hasSection && !injection.hasContext) {
+      compatReport(
+        'systemPrompt.section 与 systemPrompt.context 都不可用',
+        'Host 半部无法注入任何规则，语言跟随不会生效（样式部分不受影响）。',
+      );
+    } else if (!injection.hasContext) {
+      compatReport(
+        'systemPrompt.context 不可用',
+        '只能注入系统提示词段落。实测仅靠段落时语言跟随会明显变弱（CJK 0.096 量级）。',
+      );
+    }
+    injection.applyMode(store.get());
+  });
 
   /* 自更新端点与语言注入**完全独立**：即使用户把 mode 设成 off（只想关掉注入），
-   * 也照样要注册。⚠️ 早先这一句写在函数末尾、且在 off 短路之后 ——
-   * 于是 mode=off 的用户会发现 /update/status 变成 404，整个自更新面板凭空消失。 */
+   * 也照样要注册；systemPrompt 服务缺席时更要注册 —— 否则用户会看到「更新选项凭空消失」。
+   * ⚠️ 早先这一句写在函数末尾、且在 off 短路之后，踩过一次。 */
   registerUpdateRoutes(ctx, {
     getMode: () => store.get(),
     setMode: (next) => {
       const result = store.set(next);
-      if (result.ok) injection.applyMode(result.mode);
+      // 注入器还没就绪（服务迟到）时只落盘；服务到位后用存下来的值注册
+      if (result.ok && injection !== null) injection.applyMode(result.mode);
       return result;
     },
   });
@@ -257,6 +272,11 @@ function createModeStore(fallback) {
  *
  * 段落/上下文的文本注册后不能原地改，所以切换模式的做法是
  * 「先全部注销 → 再按新模式注册」。顺序不能反：同层同名重复注册会抛错。
+ *
+ * @param ctx **已经声明过 inject 的** scope —— 调用方要传
+ *   `ctx.inject(['systemPrompt'], cb)` 的回调参数。直接传顶层 ctx 会在读
+ *   `ctx.systemPrompt` 时抛「cannot get property "systemPrompt" without inject」，
+ *   并让整个插件激活失败。
  */
 function createInjection(ctx) {
   const hasSection = typeof ctx.systemPrompt?.section === 'function';
@@ -310,14 +330,10 @@ const AUTO_UPDATE_DELAY_MS = 8000;
 
 function registerUpdateRoutes(ctx, settings = {}) {
   if (typeof ctx.inject !== 'function') return;
-  /* ⚠️ 只声明 webServer，不要连 connection 一起要。
-   *
-   * `ctx.inject([...], cb)` 的含义是「列出的服务**全部**就绪才调用 cb」。
-   * 早先这里写的是 `inject(['connection', 'webServer'])`，而 `connection` 是**可选服务**
-   * （对照：dsh-bottom-info-bar 把 connection / webServer 都当可选依赖声明式获取，
-   *  @copylee/dsh-computer-use 只 inject ["webServer"]）。它一旦缺席，回调就永不触发 ——
-   * 端点 404，用户看到的就是「自动更新暂不可用 HTTP 404」（实测：本机 19387 上也是 404）。
-   * 鉴权那层改成可选：拿不到 connection 就跳过 requestRejection。 */
+  /* ⚠️ **只声明 webServer**，不要连 `connection` 一起要：后者在这个回调的 scope 里是
+   * 「inactive context」，访问 `webCtx.connection` 会直接抛
+   * `cannot get required service "connection" in inactive context`（实测：端点从 404 变 500）。
+   * 鉴权改成 try/catch 里可选获取，见下面的 handler。 */
   ctx.inject(['webServer'], (webCtx) => {
     let updater = null;
     try {
@@ -362,11 +378,15 @@ function registerUpdateRoutes(ctx, settings = {}) {
         res.end(body);
       };
       try {
-        // 复用 DSH 的鉴权边界（可选：connection 缺席时跳过，webServer 本身只监听 loopback）
-        if (typeof webCtx.connection?.requestRejection === 'function') {
-          const rejection = webCtx.connection.requestRejection(req);
-          if (rejection !== undefined) { send(rejection, { error: 'request rejected' }); return; }
-        }
+        /* 复用 DSH 的鉴权边界 —— **必须 try/catch**：`connection` 在这个回调的 scope 里是
+         * 「inactive context」，连读属性都会抛，`?.` 也挡不住。拿不到就跳过
+         *（webServer 本身只监听 loopback）。 */
+        try {
+          if (typeof webCtx.connection?.requestRejection === 'function') {
+            const rejection = webCtx.connection.requestRejection(req);
+            if (rejection !== undefined) { send(rejection, { error: 'request rejected' }); return; }
+          }
+        } catch { /* 拿不到鉴权边界就跳过 */ }
 
         const url = new URL(req.url || '/', 'http://localhost');
         if (!url.pathname.startsWith(`${ROUTE_PREFIX}/`)) { send(404, { error: 'not found' }); return; }
@@ -393,10 +413,13 @@ function registerUpdateRoutes(ctx, settings = {}) {
       }
     };
 
-    webCtx.effect(
-      () => webCtx.webServer.register({ kind: 'prefix', path: ROUTE_PREFIX, handler }),
-      'dsh-thinking-panel: self-update routes',
-    );
+    /* ⚠️ 不要包 `webCtx.effect`：`ctx.inject` 的回调参数虽然是 ctx，但注册路由时
+     * **直接调用并把返回值交给 cordis** 才是与参照实现一致的做法 —— 对照
+     * dsh-bottom-info-bar：`ctx.inject(['connection','webServer'], (webCtx) => {
+     *   const dispose = webCtx.webServer.register({ … }); … })`。
+     * 实测踩过：包了 `webCtx.effect(...)` 之后，回调确实执行、`register` 也是函数，
+     * 但路由**始终 404**。 */
+    const disposeRoute = webCtx.webServer.register({ kind: 'prefix', path: ROUTE_PREFIX, handler });
 
     /* 自动更新：启动后延迟跑一次，用户不用点任何东西。
      * 关掉开关的人在 autoUpdate() 里会直接短路；失败也不打扰用户 —— 状态里能看到 lastError。

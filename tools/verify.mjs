@@ -120,6 +120,19 @@ for (const [mode, expectNull, needle] of [
   const c = [];
   const ctx = {
     effect: (fn) => fn(),
+    /* Host 现在用运行时 `ctx.inject(['systemPrompt'], cb)` **可选**获取服务，
+     * 而不是静态 `export const inject` 硬门禁 —— mock 要按契约把回调跑一遍，
+     * 并且把服务挂到回调参数上（真实现里回调参数才允许访问该服务）。 */
+    inject: (deps, cb) => {
+      const scoped = {
+        effect: (fn) => fn(),
+        systemPrompt: {
+          section: (x) => { s.push(x); return () => {}; },
+          context: (x) => { c.push(x); return () => {}; },
+        },
+      };
+      if (deps.includes('systemPrompt')) cb(scoped);
+    },
     systemPrompt: { section: (x) => { s.push(x); return () => {}; }, context: (x) => { c.push(x); return () => {}; } },
   };
   host.apply(ctx, { mode });
@@ -137,6 +150,19 @@ for (const [mode, expectNull, needle] of [
   const c = [];
   const ctx = {
     effect: (fn) => fn(),
+    /* Host 现在用运行时 `ctx.inject(['systemPrompt'], cb)` **可选**获取服务，
+     * 而不是静态 `export const inject` 硬门禁 —— mock 要按契约把回调跑一遍，
+     * 并且把服务挂到回调参数上（真实现里回调参数才允许访问该服务）。 */
+    inject: (deps, cb) => {
+      const scoped = {
+        effect: (fn) => fn(),
+        systemPrompt: {
+          section: (x) => { s.push(x); return () => {}; },
+          context: (x) => { c.push(x); return () => {}; },
+        },
+      };
+      if (deps.includes('systemPrompt')) cb(scoped);
+    },
     systemPrompt: { section: (x) => { s.push(x); return () => {}; }, context: (x) => { c.push(x); return () => {}; } },
   };
   host.apply(ctx, { mode: 'bogus' });
@@ -1013,6 +1039,11 @@ check('回滚过的版本不会被自动装回来（holdVersion）',
 check('下载有超时与体积上限', /timeoutMs/.test(selfUpdateSrc) && /maxBytes/.test(selfUpdateSrc));
 check('package.json 的 files 收录了 self-update.js',
   JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')).files.includes('self-update.js'));
+/* 回归：Node 的规则是「`exports` 一旦存在，就**封闭所有未列出的子路径**」。
+ * 0.2.0 补全包元数据时加了 exports，却没列 `./cordis.patch.yml` ——
+ * 对照能正常工作的 dsh-bottom-info-bar，它的 exports 里明确列了这一条。 */
+check('exports 列出了 cordis.patch.yml（DSH 要读插件的 patch 文件）',
+  /"\.\/cordis\.patch\.yml"\s*:\s*"\.\/cordis\.patch\.yml"/.test(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')));
 
 /* ================================================================== */
 console.log(`\n==================== ${pass} passed, ${fail} failed${skipped ? `, ${skipped} skipped` : ''} ====================`);

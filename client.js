@@ -139,12 +139,11 @@ window.__ModuleLoader__.load({
       'diag.render': '渲染过的思考节点',
       'diag.degraded': '降级',
       'diag.primitives': '可用的官方组件',
-      'diag.autoReveal': '自动展开（成功 / 尝试）',
-      'diag.autoRevealNotNeeded': '无需展开',
+      'diag.autoReveal': '自动展开（仅异常时显示数据）',
       'diag.navIcon': '导航图标补丁',
       'diag.compat': '兼容性提示',
       'diag.none': '无（已全部降级）',
-      'diag.ok': '无',
+      'diag.ok': '正常',
       'diag.hint': '样式悄悄变回出厂时，先看这里：哪一项是 0 或者「无」，就是那一环掉了。',
       'settings.preview.title': '思考预览行数',
       'settings.preview.desc': '「思考中」折叠态显示几行推理正文（1–20，拖动即时生效）。5 行是照官方客户端的观感定的。',
@@ -210,12 +209,11 @@ window.__ModuleLoader__.load({
       'diag.render': 'Thinking nodes rendered',
       'diag.degraded': 'degraded',
       'diag.primitives': 'Official components available',
-      'diag.autoReveal': 'Auto-expand (ok / attempts)',
-      'diag.autoRevealNotNeeded': 'not needed',
+      'diag.autoReveal': 'Auto-expand (data shown only when failing)',
       'diag.navIcon': 'Nav icon patch',
       'diag.compat': 'Compatibility notices',
       'diag.none': 'none (fully degraded)',
-      'diag.ok': 'none',
+      'diag.ok': 'OK',
       'diag.hint': 'If the styling silently reverts to shipped, look here first: whichever row is 0 or "none" is the broken link.',
       'settings.preview.title': 'Preview lines',
       'settings.preview.desc': 'How many lines of reasoning the collapsed "thinking" state shows (1–20, applies as you drag). Five matches the official client.',
@@ -337,6 +335,9 @@ window.__ModuleLoader__.load({
 .dst-diag-row{display:flex;gap:8px;color:var(--dsw-alias-label-tertiary)}
 .dst-diag-key{flex:none;min-width:9em}
 .dst-diag-val{color:var(--dsw-alias-label-secondary);word-break:break-all}
+/* 异常项整行标红（令牌名带兜底色，DSH 换主题也不会变成不可见） */
+.dst-diag-row[data-bad] .dst-diag-key,
+.dst-diag-row[data-bad] .dst-diag-val{color:var(--dsw-alias-label-error,#e5534b)}
 .dst-diag-hint{margin-top:6px;color:var(--dsw-alias-label-caption)}
 .dst-diag-issues{margin-top:6px;white-space:pre-wrap;
   color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-secondary))}
@@ -1375,25 +1376,44 @@ window.__ModuleLoader__.load({
         diag.jsonBlock ? 'JsonBlock' : null,
         diag.switch ? 'Switch' : null,
       ].filter(Boolean);
-      /* ⚠️ 「0 / 0」会被读成「功能坏了」，但它的真实含义是「这一轮本来就不需要展开」——
-       * 详细 / 完全展开模式下过程组本来就是展开的，代码故意不记 miss（见 revealProcessGroup
-       * 调用处的注释）。所以一次都没尝试过时直接说清楚，别摆两个零。 */
+      /* 自检的原则：**正常就别说话**。
+       * 早先每行都摊开原始数据（`0 / 0`、组件清单…），结果正常状态看起来像一堆待解读的
+       * 报错——真正的异常反而被淹没。现在只有出问题的那一项才给数据，并且标红。 */
+      const allPrimitives = primitives.length === 4;
       const revealAttempts = diag.revealHits + diag.revealMisses;
-      const revealText = revealAttempts === 0
-        ? tr('diag.autoRevealNotNeeded')
-        : `${diag.revealHits} / ${revealAttempts}`;
+      const degradeBad = diag.degraded > 0;
+      const revealBad = diag.revealMisses > 0;
+      const navBad = diag.navIcon !== 'applied';
+      const compatBad = compatIssues.length > 0;
       const rows = [
-        [tr('diag.render'), String(diag.rendered) + (diag.degraded > 0 ? `  ·  ${tr('diag.degraded')} ${diag.degraded}` : '')],
-        [tr('diag.primitives'), primitives.length > 0 ? primitives.join(' · ') : tr('diag.none')],
-        [tr('diag.autoReveal'), revealText],
-        [tr('diag.navIcon'), diag.navIcon],
-        [tr('diag.compat'), compatIssues.length > 0 ? String(compatIssues.length) : tr('diag.ok')],
+        [
+          tr('diag.render'),
+          degradeBad ? `${diag.rendered}  ·  ${tr('diag.degraded')} ${diag.degraded}` : String(diag.rendered),
+          degradeBad,
+        ],
+        [
+          tr('diag.primitives'),
+          allPrimitives ? tr('diag.ok') : (primitives.length > 0 ? primitives.join(' · ') : tr('diag.none')),
+          !allPrimitives,
+        ],
+        [
+          tr('diag.autoReveal'),
+          revealBad ? `${diag.revealHits} / ${revealAttempts}` : tr('diag.ok'),
+          revealBad,
+        ],
+        [tr('diag.navIcon'), navBad ? diag.navIcon : tr('diag.ok'), navBad],
+        [tr('diag.compat'), compatBad ? String(compatIssues.length) : tr('diag.ok'), compatBad],
       ];
       return h('div', { className: 'dst-diag' }, [
         h('div', { key: 'title', className: 'dst-diag-title' }, tr('diag.title')),
-        ...rows.map((pair, i) => h('div', { key: `r${i}`, className: 'dst-diag-row' }, [
-          h('span', { key: 'k', className: 'dst-diag-key' }, pair[0]),
-          h('span', { key: 'v', className: 'dst-diag-val' }, String(pair[1])),
+        ...rows.map((row, i) => h('div', {
+          key: `r${i}`,
+          className: 'dst-diag-row',
+          // 出问题的那一行整体标红（样式里用 data-bad 选）
+          'data-bad': row[2] ? 'true' : undefined,
+        }, [
+          h('span', { key: 'k', className: 'dst-diag-key' }, row[0]),
+          h('span', { key: 'v', className: 'dst-diag-val' }, String(row[1])),
         ])),
         h('div', { key: 'hint', className: 'dst-diag-hint' }, tr('diag.hint')),
         compatIssues.length > 0

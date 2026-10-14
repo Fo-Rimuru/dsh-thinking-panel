@@ -725,10 +725,13 @@ check('自检区块渲染到设置页',
 check('自检记录自动展开的成功/放弃次数与导航图标状态',
   /diag\.revealHits \+= 1/.test(clientSrc) && /diag\.revealMisses \+= 1/.test(clientSrc)
   && /diag\.navIcon = 'applied'/.test(clientSrc));
-/* 回归：一次都没尝试过时不能显示「0 / 0」—— 那会被读成「功能坏了」，
- * 而真实含义是「这一轮本来就不需要展开」（详细模式下组本来就是展开的）。 */
-check('自检的自动展开：没尝试过时显示「无需展开」而不是 0 / 0',
-  /diag\.autoRevealNotNeeded/.test(clientSrc) && /revealAttempts === 0/.test(clientSrc));
+/* 回归：自检的原则是**正常就别说话** —— 没问题的那一行只显示「正常」，
+ * 只有异常项才给具体数据、并把该行标红（data-bad）。
+ * 早先每行都摊原始数据（`0 / 0`、组件清单…），正常状态看起来像一堆待解读的报错。 */
+check('自检：正常项显示「正常」，异常项才给数据并标红',
+  /'data-bad': row\[2\] \? 'true'/.test(clientSrc)
+  && /dst-diag-row\[data-bad\]/.test(clientSrc)
+  && /'diag\.ok': '正常'/.test(clientSrc));
 check('「回到底部」只在没贴底时出现',
   /const backToBottom = atBottom \? null : h\('button'/.test(clientSrc));
 // 回归：只挂在思考面板里不够 —— 面板在「最终回答」阶段已经不再变化（running=false、text 不变），

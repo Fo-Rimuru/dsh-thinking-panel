@@ -54,8 +54,16 @@ jobs:
         run: node tools/test-self-update.mjs
 
       - name: 发布到 npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # ⚠️ 这里**故意不传 NODE_AUTH_TOKEN** —— 走 npm 的 Trusted Publishing（OIDC）：
+        # GitHub 用工作流的身份令牌向 npm 换取**短期**凭据，所以不需要任何长期 token。
+        #
+        # 为什么放弃 token 方案：实测带「Bypass 2FA」的 Granular token 发布时仍然报
+        #   npm error code EOTP
+        #   npm error This operation requires a one-time password from your authenticator.
+        # 而 npm 已公告要限制「能绕过 2FA 的 token」（直接发布自 2027 年 1 月起），
+        # 其包页面上也直接把 Trusted Publishing 标为自动化场景的推荐做法。
+        #
+        # 前提：在 npm 包设置页配好 Trusted Publisher（owner/repo + 本文件名 publish.yml）。
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "== 演练模式：只打包，不上传 =="

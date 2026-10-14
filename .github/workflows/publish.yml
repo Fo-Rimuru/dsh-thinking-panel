@@ -31,7 +31,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+          # ⚠️ **故意不设 registry-url**：设了它，setup-node 会生成一个 `.npmrc`，内容形如
+          #   //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+          # 而走 Trusted Publishing（OIDC）时这个变量根本不存在 —— npm 会拿空 token 去认证
+          # 然后失败（实测报了两次 `npm error code EOTP` 之后才发现这一层）。
+          # OIDC 的短期凭据由 npm 自己通过 id-token 换取，不需要任何 .npmrc。
 
       # 版本一致性：tag 必须与 package.json 完全一致。
       # npm 上的版本不能删除、只能废弃，发错代价很大，所以宁可在这里就失败。
@@ -52,6 +56,10 @@ jobs:
 
       - name: 自更新单测
         run: node tools/test-self-update.mjs
+
+      # 双保险：万一别的步骤又留下了 .npmrc，这里清掉，确保 npm 走 OIDC 而不是找 token
+      - name: 清掉可能存在的 .npmrc（OIDC 不需要 token 文件）
+        run: rm -f .npmrc "$HOME/.npmrc"
 
       - name: 发布到 npm
         # ⚠️ 这里**故意不传 NODE_AUTH_TOKEN** —— 走 npm 的 Trusted Publishing（OIDC）：

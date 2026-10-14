@@ -1,0 +1,71 @@
+# 推 tag（v*）时自动发布到 npm，并建好 GitHub Release。
+#
+# 为什么需要它：npm 的交互式 2FA 没法在自动化里完成（Windows Hello 的验证界面跑在
+# Windows 安全桌面上，脚本既截不到也点不到）。改用存在仓库 Secrets 里的 NPM_TOKEN
+# （Granular Access Token，勾了 Bypass 2FA）后，CI 就能自己发布，人不必在场。
+#
+# 手动触发（Actions 页面 → Run workflow）时可以勾 dry_run：只走完打包与校验、
+# 不真正上传 —— 用来在信任整条链路之前先验证一遍。
+
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只演练（不真正发布到 npm）'
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 建 Release
+      id-token: write   # npm provenance（来源证明）
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # 版本一致性：tag 必须与 package.json 完全一致。
+      # npm 上的版本不能删除、只能废弃，发错代价很大，所以宁可在这里就失败。
+      - name: 校验 tag 与 package.json 版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG  package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag（$TAG）与 package.json（$PKG）不一致，拒绝发布"
+            exit 1
+          fi
+
+      # 这个插件没有运行时依赖，所以不需要 npm ci
+      - name: 自检
+        run: node tools/verify.mjs
+
+      - name: 自更新单测
+        run: node tools/test-self-update.mjs
+
+      - name: 发布到 npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "== 演练模式：只打包，不上传 =="
+            npm publish --dry-run --access public
+          else
+            npm publish --provenance --access public
+          fi
+
+      - name: 建 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes

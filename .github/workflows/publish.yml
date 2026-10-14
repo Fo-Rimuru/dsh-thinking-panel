@@ -61,6 +61,16 @@ jobs:
       - name: 清掉可能存在的 .npmrc（OIDC 不需要 token 文件）
         run: rm -f .npmrc "$HOME/.npmrc"
 
+      # ⚠️ **Trusted Publishing 需要 npm >= 11.5.1**，而 setup-node 装的 Node 22 自带 npm 10.x。
+      # 旧版 npm 不认识 OIDC 换来的凭据，于是把自己当成「没登录」，实测报：
+      #   npm error code ENEEDAUTH
+      #   npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+      # 所以发布前必须先升级 npm。这一条是排查了四次失败才定位到的。
+      - name: 升级 npm（Trusted Publishing 需要 >= 11.5.1）
+        run: |
+          npm install -g npm@latest
+          echo "npm 版本: $(npm --version)"
+
       - name: 发布到 npm
         # ⚠️ 这里**故意不传 NODE_AUTH_TOKEN** —— 走 npm 的 Trusted Publishing（OIDC）：
         # GitHub 用工作流的身份令牌向 npm 换取**短期**凭据，所以不需要任何长期 token。

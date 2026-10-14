@@ -80,6 +80,19 @@ const contexts = [];
 const effects = [];
 const mockHostCtx = {
   effect(fn, label) { effects.push({ fn, label }); return fn(); },
+  /* Host 用运行时 `ctx.inject(['systemPrompt'], cb)` **可选**获取服务（不再用静态 inject
+   * 硬门禁）—— mock 要把回调跑一遍，并把服务挂在**回调参数**上：
+   * 真实现里只有这个 scope 才允许访问该服务，顶层 ctx 读它会直接抛。 */
+  inject(deps, cb) {
+    const scoped = {
+      effect(fn, label) { effects.push({ fn, label }); return fn(); },
+      systemPrompt: {
+        section(section) { sections.push(section); return () => {}; },
+        context(context) { contexts.push(context); return () => {}; },
+      },
+    };
+    if (deps.includes('systemPrompt')) cb(scoped);
+  },
   systemPrompt: {
     section(section) { sections.push(section); return () => {}; },
     context(context) { contexts.push(context); return () => {}; },

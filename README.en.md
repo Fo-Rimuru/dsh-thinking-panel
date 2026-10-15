@@ -33,7 +33,7 @@ The plugin now expands it for you **while a turn is running**, through DSH's own
 (`beforematch` on the group body → `setOpen(true)`): it does not steal focus, does not touch the DOM
 directly and does not bypass React's state machine. Only if that channel ever breaks does it fall back
 to clicking the group header — and restoring focus afterwards. The switch lives in
-**Settings → General → Thinking Panel → Auto-expand the process group** and is **on by default**.
+**Settings → Plugins → Thinking Panel → Auto-expand the process group** and is **on by default**.
 
 Turn it off and the old behaviour returns; then set
 **Settings → General → Work details** to **Detailed** — while a turn is running, that is the only
@@ -100,7 +100,7 @@ Please do this in order:
 4. Restart DSH.
 5. After the restart, confirm three things for me:
    - Settings → Plugins lists dsh-thinking-panel[Thinking Panel]
-   - Settings → General shows a "Thinking Panel" row with a switch
+   - Settings → Plugins → Thinking Panel opens with the switches and the self-check block
    - Send a message: the thinking panel should show a left rail, a multi-line
      scrolling preview, and expand when clicked
 
@@ -137,7 +137,7 @@ You can also use the GUI: **Settings → Plugins → Install local package**.
 **Confirm it worked**
 
 1. **Settings → Plugins** lists `dsh-thinking-panel[Thinking Panel]`
-2. **Settings → General** shows a "Thinking Panel" row with the official-style switch
+2. **Settings → Plugins → Thinking Panel** opens with the official-style switches
 3. Send any message — the thinking panel should show a left rail, a `Thinking` title and a
    multi-line scrolling preview
 4. Clicking the title row expands it, and the expanded body scrolls independently
@@ -187,8 +187,8 @@ After that, both `github:owner/repo` and full URLs go over HTTPS and no SSH key 
 > ("Installed plugins do not update automatically yet. To upgrade a plugin, uninstall it and
 > install the new version."). **This plugin updates itself; no uninstall/reinstall needed.**
 
-The plugin updates itself; the controls live in **Settings → Thinking Panel** (its own entry in the
-settings sidebar).
+The plugin updates itself; the controls live in **Settings → Plugins → Thinking Panel**
+(it sits in the Plugins page like `dsh-bottom-info-bar`, so it takes **no slot** in the settings sidebar).
 
 | Action | Behaviour |
 |---|---|
@@ -220,14 +220,15 @@ State and backups live in `$DSH_HOME/plugin-data/dsh-thinking-panel/` (`update-s
 
 ### Settings page (recommended)
 
-**Settings → Thinking Panel** holds four switches plus one slider: plugin master switch,
+**Settings → Plugins → Thinking Panel** holds five switches plus one slider: plugin master switch,
 "reason in the language of the question", auto-expand the process group, automatic updates, and
 **preview lines** (1–20, default 5, applied as you drag). The injection switch is on by default —
 turn it off to go back to the shipped English reasoning (more reliable on some tasks).
 
 Below that is a **self-check** block: which official components are available, render/degraded
-counts, auto-expand hits and give-ups, nav-icon patch state, and compatibility notices.
-**If the styling ever silently reverts to shipped, this tells you which link broke.**
+counts, auto-expand hits and give-ups, and compatibility notices.
+**When everything is fine each row simply says "OK"; only a failing row shows its data and turns red** —
+so if the styling ever silently reverts to shipped, this tells you which link broke.
 
 ### `cordis.patch.yml` (advanced: force a language)
 
@@ -302,7 +303,7 @@ match**. Only `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` are checked, using
   several rounds of back-and-forth.
 - **Pull requests** are welcome. Please run `node tools/verify.mjs` first and keep all 218 checks green (238 with a DSH source copy).
 - **Planned but not built yet**: see [`docs/ROADMAP.md`](docs/ROADMAP.md) (0.2.0: injection toggle,
-  auto-update toggle, one-click rollback entry, settings as its own section).
+  auto-update toggle, one-click rollback entry, settings entry moved into the Plugins page).
 - Please skim [Known limitations](#known-limitations) before filing — things like "language following
   does nothing in heavy agent sessions" are known inherent limits, not bugs.
 

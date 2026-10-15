@@ -85,7 +85,6 @@ window.__ModuleLoader__.load({
       degraded: 0,          // 走了纯文本兜底的次数
       revealHits: 0,        // 自动展开过程组成功次数
       revealMisses: 0,      // 自动展开重试到放弃的次数
-      navIcon: 'unknown',   // 导航图标补丁：applied / missing / unknown
       seenNodes: new Set(), // 渲染计数去重用（同一节点会以两种 groupPart 各渲染一次）
       since: Date.now(),
     };
@@ -140,7 +139,6 @@ window.__ModuleLoader__.load({
       'diag.degraded': '降级',
       'diag.primitives': '可用的官方组件',
       'diag.autoReveal': '自动展开（仅异常时显示数据）',
-      'diag.navIcon': '导航图标补丁',
       'diag.compat': '兼容性提示',
       'diag.none': '无（已全部降级）',
       'diag.ok': '正常',
@@ -210,7 +208,6 @@ window.__ModuleLoader__.load({
       'diag.degraded': 'degraded',
       'diag.primitives': 'Official components available',
       'diag.autoReveal': 'Auto-expand (data shown only when failing)',
-      'diag.navIcon': 'Nav icon patch',
       'diag.compat': 'Compatibility notices',
       'diag.none': 'none (fully degraded)',
       'diag.ok': 'OK',
@@ -319,7 +316,7 @@ window.__ModuleLoader__.load({
 /* 无障碍：屏幕阅读器能听出「正在思考」（出厂在同一位置用 row.running） */
 .dst-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0 0 0 0);white-space:nowrap;border:0}
-/* 设置页（settings.section 的整页内容） */
+/* 设置页（注册在「插件」页的 plugins.bundle.config 里，这是整页内容） */
 .dst-page{display:flex;flex-direction:column;gap:2px;padding:4px 0;min-width:0}
 .dst-page-title{font-size:16px;line-height:24px;font-weight:500;color:var(--dsw-alias-label-primary);margin-bottom:4px}
 .dst-page-compat{margin:6px 0;padding:8px 10px;border-radius:6px;font-size:12px;line-height:18px;
@@ -372,8 +369,6 @@ window.__ModuleLoader__.load({
 /* 与出厂 AssistantMarkdown.module.css 的 .stopped 同款：被中断的轮次挂一个小徽标 */
 .dst-stopped{border-radius:var(--dsw-radius-s,4px);background:var(--dsw-alias-interactive-bg-hover);
   color:var(--dsw-alias-label-tertiary);align-self:flex-start;padding:0 6px;font-size:11px;line-height:18px}
-/* 图标样板：只用来给设置导航项克隆 SVG，本身不占位、不可见。 */
-.dst-icon-sample{position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none}
 .dst-plain{color:var(--dsw-alias-label-primary)}
 .dst-plain-reasoning{margin:4px 0;color:var(--dsw-alias-label-secondary);
   font:var(--dsw-font-markdown-small);white-space:pre-wrap;max-height:6.5em;overflow:hidden}
@@ -1187,15 +1182,9 @@ window.__ModuleLoader__.load({
      * 样式座位与设置行
      * ================================================================== */
     function StyleSeat() {
-      return h(React.Fragment, null, [
-        h('style', { key: 'css', 'data-plugin': 'dsh-thinking-panel' }, CSS),
-        /* 藏一个图标样板：设置导航项的 DOM 补丁要克隆这里的 SVG，
-         * 这样它和「已思考」左边那个图标一定是同一个。 */
-        IconThink
-          ? h('span', { key: 'icon', className: 'dst-icon-sample', 'aria-hidden': true },
-            h(IconThink, { size: 16 }))
-          : null,
-      ]);
+      /* 只挂样式表。早先这里还藏了一个图标样板（供「设置导航项换图标」的 DOM 补丁克隆），
+       * 那个补丁随设置入口迁到「插件」页面后已删除，样板也就不需要了。 */
+      return h('style', { key: 'css', 'data-plugin': 'dsh-thinking-panel' }, CSS);
     }
 
     /**
@@ -1289,84 +1278,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /**
-     * 给设置导航项换上思考图标。
-     *
-     * ⚠️ DSH 的设置导航图标是 shell 里 `navIcon(id)` 的**硬编码映射**，第三方 section
-     * 一律拿兜底齿轮 —— 官方 SlotLabel 也没有 icon 选项（壁纸引擎的源码注释里写明了这点）。
-     * 所以只能像壁纸引擎 / 电脑控制那样做 DOM 补丁：给标签文字匹配的按钮打个 class，
-     * 再用 CSS mask 盖上我们自己的图标。**补丁失败就保留齿轮**，不抛、不重试。
-     */
-    const NAV_SVG_CLASS = 'dst-nav-svg';
-
-    function installNavIcon(labelOf) {
-      if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => {};
-      let observer = null;
-      let frame = 0;
-      let disposed = false;
-
-      const sync = () => {
-        frame = 0;
-        if (disposed) return;
-        try {
-          const label = typeof labelOf === 'function' ? labelOf() : '';
-          if (!label) return;
-          const sample = document.querySelector('.dst-icon-sample svg');
-          if (sample === null) return;                 // 样板还没渲染：等下一次 MutationObserver
-          for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-            for (const button of dialog.querySelectorAll('nav button')) {
-              if ((button.textContent || '').trim() !== label) continue;
-              /* ⚠️ 走「克隆真实 SVG 替换原图标」，不用 CSS mask。
-               * mask 那条路踩了两次坑：① data URI 里没有 currentColor 的上下文，
-               * DSH 的描边型图标会被渲染成**全透明**，mask 拿到空 alpha，那个位置一片空白；
-               * ② 原图标外面还套了一层，`>svg` 选不中它，于是新旧图标并排、中间留出空位。
-               * 直接换节点没这些问题：颜色（currentColor）、尺寸、描边全都跟原样走。 */
-              if (button.querySelector(`.${NAV_SVG_CLASS}`) !== null) continue;
-              const original = button.querySelector('svg');
-              if (original === null) continue;
-              const clone = sample.cloneNode(true);
-              clone.classList.add(NAV_SVG_CLASS);
-              try {
-                const box = original.getBoundingClientRect();
-                if (box && box.width > 0) {
-                  clone.setAttribute('width', String(Math.round(box.width)));
-                  clone.setAttribute('height', String(Math.round(box.height)));
-                }
-              } catch { /* 拿不到尺寸就用样板自带的 */ }
-              try {
-                original.replaceWith(clone);
-                clone.__dstOriginalSvg = original;    // 卸载时换回去
-                diag.navIcon = 'applied';
-              } catch { diag.navIcon = 'missing'; }
-            }
-          }
-        } catch { /* 补丁失败＝保留齿轮 */ }
-      };
-
-      const schedule = () => {
-        if (frame !== 0) return;
-        try { frame = requestAnimationFrame(sync); } catch { sync(); }
-      };
-      sync();
-      try {
-        observer = new MutationObserver(schedule);
-        observer.observe(document.body, { childList: true, subtree: true });
-      } catch { /* ignore */ }
-
-      return () => {
-        disposed = true;
-        if (frame !== 0) { try { cancelAnimationFrame(frame); } catch { /* ignore */ } }
-        try { if (observer) observer.disconnect(); } catch { /* ignore */ }
-        /* 换进去的图标在插件卸载/禁用时换回原来的（否则齿轮回不来，得重开设置面板才自愈）。 */
-        try {
-          document.querySelectorAll(`.${NAV_SVG_CLASS}`).forEach((node) => {
-            const original = node.__dstOriginalSvg;
-            if (original && typeof node.replaceWith === 'function') node.replaceWith(original);
-          });
-        } catch { /* ignore */ }
-      };
-    }
-
     /** 设置页的「自检」区块：把 diag 摊成几行 —— 样式回退时一眼看出是哪一环掉了。 */
     function DiagBlock(props) {
       const tr = typeof props.t === 'function' ? props.t : IDENTITY_T;
@@ -1383,7 +1294,6 @@ window.__ModuleLoader__.load({
       const revealAttempts = diag.revealHits + diag.revealMisses;
       const degradeBad = diag.degraded > 0;
       const revealBad = diag.revealMisses > 0;
-      const navBad = diag.navIcon !== 'applied';
       const compatBad = compatIssues.length > 0;
       const rows = [
         [
@@ -1401,7 +1311,6 @@ window.__ModuleLoader__.load({
           revealBad ? `${diag.revealHits} / ${revealAttempts}` : tr('diag.ok'),
           revealBad,
         ],
-        [tr('diag.navIcon'), navBad ? diag.navIcon : tr('diag.ok'), navBad],
         [tr('diag.compat'), compatBad ? String(compatIssues.length) : tr('diag.ok'), compatBad],
       ];
       return h('div', { className: 'dst-diag' }, [
@@ -1423,10 +1332,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 设置页 —— 注册在 `settings.section`，也就是设置左侧导航里**独立的一栏**。
+     * 设置页 —— 注册在「插件」页里的 `plugins.bundle.config`（**不是**设置左侧导航）。
      *
-     * 早先挂在 `settings.general.item`（通用设置里的一行）：位置太深，也塞不下
-     * 现在这些开关。`label` 是个 thunk，跟随语言切换。
+     * 演进：`settings.general.item`（通用设置里的一行）→ `settings.section`（左侧导航独立一栏）
+     * → 现在是 `plugins.bundle.config`。作者反馈左侧栏会被多插件用户挤满，而本插件的设置
+     * 并不需要常调，所以挪进「插件」页（对照 dsh-bottom-info-bar / dsh-plugin-wallpaper-engine）。
+     * `label` 是个 thunk，跟随语言切换。
      */
     /**
      * 带滑动条的数值行（目前只有「预览行数」用）。
@@ -1726,23 +1637,24 @@ window.__ModuleLoader__.load({
         // 预览行数落在 :root 的 CSS 变量上（样式表里 var(--dst-preview-lines,5)）
         applyPreviewLines();
 
-        /* 设置导航项的图标：官方只给第三方兜底齿轮，这里做 DOM 补丁换成本插件的思考图标
-         *（失败就保留齿轮，不影响任何功能）。 */
-        ctx.effect(() => installNavIcon(() => t('settings.navLabel')), 'dsh-thinking-panel: settings nav icon');
-
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay', id: 'thinking-panel-style', order: 90,
         }, StyleSeat));
 
-        /* 设置左侧导航里**独立的一栏**（`settings.section`）。
-         * 电脑控制 / 壁纸引擎 / Token 用量都用这个槽位，已实测可用；
-         * `label` 是 thunk，跟随语言切换。 */
-        ctx.slots.inject('settings.section', () => ctx.slots.register({
-          name: 'settings.section',
-          id: 'thinking-panel',
-          order: 62,
-          label: () => t('settings.navLabel'),
+        /* 设置入口放在**「插件」页面里**（`plugins.bundle.config`），而不是设置左侧导航。
+         *
+         * 为什么：`settings.section` 是**一级导航**，每个插件占一格 —— 插件装多了会把
+         * 设置左侧栏挤满，而本插件的设置并不需要经常调。`plugins.bundle.config` 是
+         * DSH 自带「插件」页里的配置位，放这儿更自然、也不占导航。
+         * 对照实现：dsh-bottom-info-bar 与 dsh-plugin-wallpaper-engine 都用这个槽位。
+         *
+         * ⚠️ 这是 **keyed slot**：DSH 校验的是 `key`（bundle 的包名），不是列表槽的 `id`。
+         * 写成 `id` 会让整个 web entry 在启动时失败（bottom-info-bar 的源码里有同样提醒）。 */
+        ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+          name: 'plugins.bundle.config',
+          key: 'dsh-thinking-panel',
           locale: NS,
+          label: () => t('settings.navLabel'),
         }, (slotProps) => h(SectionBoundary, null,
           h(SettingsSection, { t: slotProps && slotProps.t ? slotProps.t : t }))));
 

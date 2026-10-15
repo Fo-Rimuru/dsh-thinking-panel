@@ -320,19 +320,25 @@ check('字典含 zh 与 en 两套', !!localeRegs[0]?.dicts?.zh && !!localeRegs[0
 check('locale 注册走 ctx.effect', clientEffects.some((l) => String(l).includes('dictionaries')));
 
 check('slots.inject 了 shell.overlay', slotInjects.includes('shell.overlay'));
-check('slots.inject 了 settings.section（设置左侧导航独立一栏）', slotInjects.includes('settings.section'));
+/* 设置入口在**「插件」页面里**（`plugins.bundle.config`），不在设置左侧导航。
+ * 理由：`settings.section` 是一级导航、每个插件占一格，插件装多了会挤满左侧栏，
+ * 而本插件的设置并不需要常调。对照 dsh-bottom-info-bar / dsh-plugin-wallpaper-engine。 */
+check('slots.inject 了 plugins.bundle.config（设置入口在「插件」页）',
+  slotInjects.includes('plugins.bundle.config'));
+check('不再注册 settings.section（不占设置左侧导航）', !slotInjects.includes('settings.section'));
 check('slots.inject 了 conversation.chat.node', slotInjects.includes('conversation.chat.node'));
 check('恰好注册 3 个 slot 条目', slotRegs.length === 3, `got ${slotRegs.length}`);
 
 const styleReg = slotRegs.find((r) => r.options.name === 'shell.overlay');
-const settingsReg = slotRegs.find((r) => r.options.name === 'settings.section');
+const settingsReg = slotRegs.find((r) => r.options.name === 'plugins.bundle.config');
 const nodeReg = slotRegs.find((r) => r.options.name === 'conversation.chat.node');
 check('shell.overlay 条目 id 正确', styleReg?.options.id === 'thinking-panel-style');
-check('settings.section 条目 id 正确', settingsReg?.options.id === 'thinking-panel');
-check('settings.section 带 label thunk（跟随语言切换）',
+/* ⚠️ `plugins.bundle.config` 是 **keyed slot**：DSH 校验的是 `key`（bundle 包名），
+ * 写成列表槽的 `id` 会让整个 web entry 在启动时失败（bottom-info-bar 源码里有同样提醒）。 */
+check('plugins.bundle.config 用 key（bundle 包名）而不是 id',
+  settingsReg?.options.key === 'dsh-thinking-panel' && settingsReg?.options.id === undefined);
+check('plugins.bundle.config 带 label thunk（跟随语言切换）',
   typeof settingsReg?.options.label === 'function' && String(settingsReg.options.label()).length > 0);
-check('settings.section 的 order 是数字（与电脑控制 61 / 壁纸引擎 500 不撞）',
-  typeof settingsReg?.options.order === 'number');
 check('conversation.chat.node 条目 key = assistant-step', nodeReg?.options.key === 'assistant-step');
 check('conversation.chat.node 条目用更低优先级遮蔽（运行时要求 lowest renders）',
   nodeReg?.options.priority === -1, `priority=${nodeReg?.options.priority}`);
@@ -344,16 +350,12 @@ check('三个条目组件都是函数',
   && typeof nodeReg?.component === 'function');
 
 /* --- 渲染 <style> ------------------------------------------------------ */
-/* StyleSeat 现在返回 Fragment：<style> + 一个隐藏的图标样板（设置导航项的 DOM 补丁克隆它）。 */
+/* StyleSeat 只挂样式表（图标样板随「设置导航项换图标」的 DOM 补丁一起删掉了）。 */
 const styleSeatTree = styleReg.component();
-const styleSeatNodes = styleSeatTree && Array.isArray(styleSeatTree.children)
-  ? styleSeatTree.children
-  : [styleSeatTree];
-const styleEl = styleSeatNodes.find((node) => node && node.type === 'style');
+const styleEl = styleSeatTree && styleSeatTree.type === 'style' ? styleSeatTree : null;
 check('StyleSeat 渲染出 <style> 元素', !!styleEl, `type=${typeof styleSeatTree?.type}`);
 check('style 带 data-plugin 标记', styleEl?.props?.['data-plugin'] === 'dsh-thinking-panel');
-check('StyleSeat 同时给出图标样板（导航项图标从它克隆）',
-  /className: 'dst-icon-sample'/.test(clientSrc));
+check('不再渲染图标样板（导航项图标补丁已移除）', !/dst-icon-sample/.test(clientSrc));
 const css = typeof styleEl?.children?.[0] === 'string' ? styleEl.children[0] : String(styleEl?.children ?? '');
 check('CSS 非空', css.length > 300, `${css.length} chars`);
 
@@ -722,9 +724,8 @@ check('思考中显示已用时间（用出厂的 data.time，不自己计时）
   && /const liveSeconds = running && hasStart/.test(clientSrc));
 check('自检区块渲染到设置页',
   /function DiagBlock\(props\)/.test(clientSrc) && /h\(DiagBlock, \{ key: 'diag'/.test(clientSrc));
-check('自检记录自动展开的成功/放弃次数与导航图标状态',
-  /diag\.revealHits \+= 1/.test(clientSrc) && /diag\.revealMisses \+= 1/.test(clientSrc)
-  && /diag\.navIcon = 'applied'/.test(clientSrc));
+check('自检记录自动展开的成功/放弃次数',
+  /diag\.revealHits \+= 1/.test(clientSrc) && /diag\.revealMisses \+= 1/.test(clientSrc));
 /* 回归：自检的原则是**正常就别说话** —— 没问题的那一行只显示「正常」，
  * 只有异常项才给具体数据、并把该行标红（data-bad）。
  * 早先每行都摊原始数据（`0 / 0`、组件清单…），正常状态看起来像一堆待解读的报错。 */
